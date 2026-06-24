@@ -9,63 +9,51 @@ comptime {
     @export(&main, .{ .name = "app_main" });
 }
 
-// LED strip configuration constants
-const LED_STRIP_USE_DMA = false;
-const LED_STRIP_LED_COUNT = if (LED_STRIP_USE_DMA) 256 else 1;
-const LED_STRIP_MEMORY_BLOCK_WORDS = if (LED_STRIP_USE_DMA) 1024 else 0;
-const LED_STRIP_GPIO_PIN = 8;
-
-fn configureLED() !led.LedStripHandle {
-    // LED strip general initialization using wrapped types
-    const strip_config = led.LedStripConfig.ws2812(LED_STRIP_GPIO_PIN, LED_STRIP_LED_COUNT);
-
-    // LED strip backend configuration: RMT
-    var rmt_config = led.LedStripRmtConfig.default;
-    rmt_config.mem_block_symbols = LED_STRIP_MEMORY_BLOCK_WORDS;
-
-    if (LED_STRIP_USE_DMA) {
-        // Set DMA flag if needed
-        rmt_config.flags = 1; // with_dma bit
-    }
-
-    var led_strip: led.LedStripHandle = null;
-    const strip = try led.newRmtDevice(&strip_config, &rmt_config, &led_strip);
-
-    log.info("Created LED strip object with RMT backend", .{});
-    return strip;
+fn main() callconv(.c) void {
+    _main() catch |err| {
+        log.err("main failed {}", .{err});
+    };
 }
 
-fn ledStripTask(led_strip_ptr: ?*anyopaque) callconv(.c) void {
-    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(led_strip_ptr.?));
+fn _main() !void {
+    log.info("LED Strip Example", .{});
+
+    var led_strip: led.LedStripHandle = null;
+    { // Configure and initialize LED strip
+        const strip_config = led.LedStripConfig.ws2812(8, 1);
+        const rmt_config = led.LedStripRmtConfig.default;
+        _ = try led.newRmtDevice(&strip_config, &rmt_config, &led_strip);
+    }
+
+    // Create LED strip control task
+    _ = try idf.rtos.Task.create(ledStripTask, "led_strip", 1024 * 4, led_strip, 5);
+
+    log.info("LED strip task started successfully", .{});
+}
+
+fn ledStripTask(ptr: ?*anyopaque) callconv(.c) void {
+    palette(ptr) catch |err| {
+        log.err("led strip task failed {}", .{err});
+    };
+    // TODO delete task or panic or...
+}
+
+fn rgbOff(ptr: ?*anyopaque) !void {
+    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
     var led_on_off: usize = 0;
 
     log.info("Start blinking LED strip", .{});
 
     while (true) {
         if (led_on_off % 4 == 0) {
-            // Set all LED off to clear all pixels
-            led.clear(led_strip) catch |err| {
-                log.err("Failed to clear LED strip: {s}", .{@errorName(err)});
-            };
-
+            try led.clear(led_strip); // Set all LED off to clear all pixels
             log.info("LED OFF!", .{});
         } else {
-            // Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color
-            var i: u32 = 0;
-            while (i < LED_STRIP_LED_COUNT) : (i += 1) {
-                const red: u8 = if (led_on_off % 4 == 1) 0xff else 0;
-                const green: u8 = if (led_on_off % 4 == 2) 0xff else 0;
-                const blue: u8 = if (led_on_off % 4 == 3) 0xff else 0;
-                led.setPixel(led_strip, i, red, green, blue) catch |err| {
-                    log.err("Failed to set LED pixel {}: {s}", .{ i, @errorName(err) });
-                };
-            }
-
-            // Refresh the strip to send data
-            led.refresh(led_strip) catch |err| {
-                log.err("Failed to refresh LED strip: {s}", .{@errorName(err)});
-            };
-
+            const red: u8 = if (led_on_off % 4 == 1) 0xff else 0;
+            const green: u8 = if (led_on_off % 4 == 2) 0xff else 0;
+            const blue: u8 = if (led_on_off % 4 == 3) 0xff else 0;
+            try led.setPixel(led_strip, 0, red, green, blue);
+            try led.refresh(led_strip); // Refresh the strip to send data
             log.info("LED ON {}!", .{led_on_off});
         }
 
@@ -74,19 +62,58 @@ fn ledStripTask(led_strip_ptr: ?*anyopaque) callconv(.c) void {
     }
 }
 
-fn main() callconv(.c) void {
-    log.info("LED Strip Example", .{});
-
-    // Configure and initialize LED strip
-    const led_strip = configureLED() catch |err| {
-        log.err("Failed to configure LED strip: {s}", .{@errorName(err)});
-        @panic("LED strip initialization failed");
+fn palette(ptr: ?*anyopaque) !void {
+    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
+    const colors = [_]u24{
+        // Retro Neon Palette
+        0xFF0000, // Pure Red
+        0x00FF00, // Pure Green
+        0x0000FF, // Pure Blue
+        0xFF00FF, // Magenta
+        0x00FFFF, // Cyan
+        0xFFFF00, // Yellow
+        // Vaporwave Cyberpunk
+        0xFF0055, // Hot Pink
+        0x9900FF, // Deep Purple
+        0x0022FF, // Electric Blue
+        0x00FFCC, // Bright Teal
+        0xFF5500, // Neon Orange
+        0x330033, // Dim Night-Glow
+        // Aurora Borealis
+        0x00FF33, // Bright Mint
+        0x00AAFF, // Sky Blue
+        0x000088, // Deep Royal Blue
+        0x7700FF, // Violet
+        0x00FF88, // Emerald Green
+        0x113300, // Forest Undertone
     };
+    while (true) {
+        for (colors) |rgb| {
+            const r = (rgb & 0xff0000) >> 16;
+            const g = (rgb & 0x00ff00) >> 8;
+            const b = (rgb & 0x0000ff);
+            log.info("rgb {x} {x} {x}", .{ r, g, b });
+            try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
+            try led.refresh(led_strip);
+            idf.rtos.Task.delayMs(1000);
+        }
+    }
+}
 
-    // Create LED strip control task
-    _ = idf.rtos.Task.create(ledStripTask, "led_strip", 1024 * 4, led_strip, 5) catch @panic("Error: LED strip task not created!");
+fn allColors(ptr: ?*anyopaque) !void {
+    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
 
-    log.info("LED strip task started successfully", .{});
+    while (true) {
+        for (0..0xff) |r| {
+            for (0..0xff) |g| {
+                for (0..0xff) |b| {
+                    try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
+                    try led.refresh(led_strip);
+                    idf.rtos.Task.delayMs(1);
+                }
+            }
+        }
+    }
 }
 
 // Override the std panic function with idf.panic
