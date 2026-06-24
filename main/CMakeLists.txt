@@ -12,9 +12,12 @@ idf_component_register(
     REQUIRES ${DEPS}
 )
 
+# To use different project root
+# ZIG_EXAMPLE_ARG is passed as argument to zig build
 set(ZIG_EXAMPLE_ARG "") # default is main/app.zig
-# to use different project root, ZIG_EXAMPLE_ARG is passed as argument to zig build
-# set(ZIG_EXAMPLE_ARG "-Dexample=${main/examples/smartled-rgb.zig}")
+if(ZIG_PROJECT_ROOT)
+  set(ZIG_EXAMPLE_ARG "-Dproject-root=${ZIG_PROJECT_ROOT}")
+endif()
 
 # Include the Zig build system 
 include(${CMAKE_SOURCE_DIR}/cmake/zig-config.cmake)

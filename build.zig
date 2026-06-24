@@ -7,12 +7,12 @@ pub fn build(b: *std.Build) !void {
     });
     const optimize = b.standardOptimizeOption(.{});
 
-    const example = b.option([]const u8, "example", "Relative path (from project root) to the Zig source file") orelse "main/app.zig";
+    const project_root = b.option([]const u8, "project-root", "Relative path to the Zig source file") orelse "main/app.zig";
 
     const obj = b.addObject(.{
         .name = "app_zig",
         .root_module = b.createModule(.{
-            .root_source_file = b.path(example),
+            .root_source_file = b.path(project_root),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
