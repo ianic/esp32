@@ -1,0 +1,10 @@
+/build/
+/cmake/
+/imports/
+/include/
+/managed_components/
+/patches/
+sdkconfig
+*.lock
+/.zig-cache/
+/zig-out/
