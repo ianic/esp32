@@ -21,16 +21,15 @@ fn main() !void {
         _ = try led.newRmtDevice(&strip_config, &rmt_config, &led_strip);
     }
 
-    const led_handle = try idf.rtos.Task.create(ledTask, "led", 1024 * 4, led_strip, 5);
-    _ = try idf.rtos.Task.create(sendColorTask, "change color", 1024 * 4, led_handle, 5);
+    const led_task = try idf.rtos.Task.create(ledTask, "led", 1024 * 4, led_strip, 5);
+    _ = try idf.rtos.Task.create(sendColorTask, "change color", 1024 * 4, led_task, 5);
 
     log.info("LED strip task started successfully", .{});
 }
 
 fn sendColorTask(ptr: ?*anyopaque) callconv(.c) void {
-    const task_handle: idf.rtos.TaskHandle = @ptrCast(@alignCast(ptr.?));
-
-    const colors = [_]u24{
+    const led_task: idf.rtos.TaskHandle = @ptrCast(@alignCast(ptr.?));
+    const pallete = [_]u24{
         // === HIGHLY DISTINCT PRIMARY & SECONDARY ===
         0xFF0000, // 1. Pure Red       (Highly distinct)
         0x00FF00, // 2. Pure Green     (Brilliant, deep green)
@@ -47,51 +46,11 @@ fn sendColorTask(ptr: ?*anyopaque) callconv(.c) void {
         0xFF0055, // 11. Hot Pink      (A sharp pink, distinct from both Red and Magenta)
         0xFFFFFF, // 12. Solid White   (All channels active, completely neutral)
 
-        // 0xFF0000, // Pure Red
-        // 0xFF0055, // Hot Pink
-
-        // 0x00FF00, // Pure Green
-        // // 0x00FFCC, // Bright Teal
-        // // 0x00FF88, // Emerald Green
-        // 0x00FF33, // Bright Mint
-
-        // 0x0000FF, // Pure Blue
-        // 0x0022FF, // Electric Blue
-        // 0xFF00FF, // Magenta
-        // 0x9900FF, // Deep Purple
-        // 0x00FFFF, // Cyan
-        // 0x00FFCC, // Bright Teal
-        // 0xFFFF00, // Yellow
-        // 0xFF5500, // Neon Orange
-
-        // // // Retro Neon Palette
-        // 0xFF0000, // Pure Red
-        // 0x00FF00, // Pure Green
-        // 0x0000FF, // Pure Blue
-        // 0xFF00FF, // Magenta
-        // 0x00FFFF, // Cyan
-        // 0xFFFF00, // Yellow
-
-        // // Vaporwave Cyberpunk
-        // 0xFF0055, // Hot Pink
-        // 0x9900FF, // Deep Purple
-        // 0x0022FF, // Electric Blue
-        // 0x00FFCC, // Bright Teal
-        // 0xFF5500, // Neon Orange
-        // 0x330033,
-        // Dim Night-Glow
-        // // Aurora Borealis
-        // 0x00FF33, // Bright Mint
-        // 0x00AAFF, // Sky Blue
-        // 0x000088, // Deep Royal Blue
-        // 0x7700FF, // Violet
-        // 0x00FF88, // Emerald Green
-        // 0x113300, // Forest Undertone
     };
     while (true) {
-        for (colors) |rgb| {
+        for (pallete) |rgb| {
             idf.rtos.Task.notify(
-                task_handle,
+                led_task,
                 rgb, // u32 value to send
                 idf.sys.eSetValueWithOverwrite, // sys.eNotifyAction (e.g., eSetBits, eIncrement)
                 0, // UBaseType notification index
