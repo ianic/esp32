@@ -5,17 +5,13 @@ const ver = idf.ver.Version;
 const mem = std.mem;
 const led = idf.led;
 
-comptime {
-    @export(&main, .{ .name = "app_main" });
-}
-
-fn main() callconv(.c) void {
-    _main() catch |err| {
+export fn app_main() callconv(.c) void {
+    main() catch |err| {
         log.err("main failed {}", .{err});
     };
 }
 
-fn _main() !void {
+fn main() !void {
     log.info("LED Strip Example", .{});
 
     var led_strip: led.LedStripHandle = null;
@@ -25,94 +21,112 @@ fn _main() !void {
         _ = try led.newRmtDevice(&strip_config, &rmt_config, &led_strip);
     }
 
-    // Create LED strip control task
-    _ = try idf.rtos.Task.create(ledStripTask, "led_strip", 1024 * 4, led_strip, 5);
+    const led_handle = try idf.rtos.Task.create(ledTask, "led", 1024 * 4, led_strip, 5);
+    _ = try idf.rtos.Task.create(sendColorTask, "change color", 1024 * 4, led_handle, 5);
 
     log.info("LED strip task started successfully", .{});
 }
 
-fn ledStripTask(ptr: ?*anyopaque) callconv(.c) void {
-    palette(ptr) catch |err| {
+fn sendColorTask(ptr: ?*anyopaque) callconv(.c) void {
+    const task_handle: idf.rtos.TaskHandle = @ptrCast(@alignCast(ptr.?));
+
+    const colors = [_]u24{
+        // === HIGHLY DISTINCT PRIMARY & SECONDARY ===
+        0xFF0000, // 1. Pure Red       (Highly distinct)
+        0x00FF00, // 2. Pure Green     (Brilliant, deep green)
+        0x0000FF, // 3. Pure Blue      (Deep blue)
+        0xFF00FF, // 4. Magenta        (Strong red-blue mix)
+        0xFFFF00, // 5. Yellow         (Warm, stark contrast to green)
+        0x00FFFF, // 6. Cyan           (Bright icy blue, distinctly non-blue)
+
+        // === CONTRAST-CORRECTED INTERMEDIATES ===
+        0xFF4000, // 7. Hardware Orange (Green slashed to 0x40 so it doesn't look yellow/green)
+        0x10FF40, // 8. Mint Green     (Heavy green with a splash of blue/red to stand out)
+        0x0080FF, // 9. Sky Blue       (A crisp, electric cyan-blue intermediate)
+        0x7F00FF, // 10. Deep Purple   (A clean violet, far less red than Magenta)
+        0xFF0055, // 11. Hot Pink      (A sharp pink, distinct from both Red and Magenta)
+        0xFFFFFF, // 12. Solid White   (All channels active, completely neutral)
+
+        // 0xFF0000, // Pure Red
+        // 0xFF0055, // Hot Pink
+
+        // 0x00FF00, // Pure Green
+        // // 0x00FFCC, // Bright Teal
+        // // 0x00FF88, // Emerald Green
+        // 0x00FF33, // Bright Mint
+
+        // 0x0000FF, // Pure Blue
+        // 0x0022FF, // Electric Blue
+        // 0xFF00FF, // Magenta
+        // 0x9900FF, // Deep Purple
+        // 0x00FFFF, // Cyan
+        // 0x00FFCC, // Bright Teal
+        // 0xFFFF00, // Yellow
+        // 0xFF5500, // Neon Orange
+
+        // // // Retro Neon Palette
+        // 0xFF0000, // Pure Red
+        // 0x00FF00, // Pure Green
+        // 0x0000FF, // Pure Blue
+        // 0xFF00FF, // Magenta
+        // 0x00FFFF, // Cyan
+        // 0xFFFF00, // Yellow
+
+        // // Vaporwave Cyberpunk
+        // 0xFF0055, // Hot Pink
+        // 0x9900FF, // Deep Purple
+        // 0x0022FF, // Electric Blue
+        // 0x00FFCC, // Bright Teal
+        // 0xFF5500, // Neon Orange
+        // 0x330033,
+        // Dim Night-Glow
+        // // Aurora Borealis
+        // 0x00FF33, // Bright Mint
+        // 0x00AAFF, // Sky Blue
+        // 0x000088, // Deep Royal Blue
+        // 0x7700FF, // Violet
+        // 0x00FF88, // Emerald Green
+        // 0x113300, // Forest Undertone
+    };
+    while (true) {
+        for (colors) |rgb| {
+            idf.rtos.Task.notify(
+                task_handle,
+                rgb, // u32 value to send
+                idf.sys.eSetValueWithOverwrite, // sys.eNotifyAction (e.g., eSetBits, eIncrement)
+                0, // UBaseType notification index
+            ) catch {};
+            idf.rtos.Task.delayMs(2000);
+        }
+    }
+}
+
+fn ledTask(ptr: ?*anyopaque) callconv(.c) void {
+    _ledTask(ptr) catch |err| {
         log.err("led strip task failed {}", .{err});
     };
     // TODO delete task or panic or...
 }
 
-fn rgbOff(ptr: ?*anyopaque) !void {
-    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
-    var led_on_off: usize = 0;
-
-    log.info("Start blinking LED strip", .{});
-
-    while (true) {
-        if (led_on_off % 4 == 0) {
-            try led.clear(led_strip); // Set all LED off to clear all pixels
-            log.info("LED OFF!", .{});
-        } else {
-            const red: u8 = if (led_on_off % 4 == 1) 0xff else 0;
-            const green: u8 = if (led_on_off % 4 == 2) 0xff else 0;
-            const blue: u8 = if (led_on_off % 4 == 3) 0xff else 0;
-            try led.setPixel(led_strip, 0, red, green, blue);
-            try led.refresh(led_strip); // Refresh the strip to send data
-            log.info("LED ON {}!", .{led_on_off});
-        }
-
-        led_on_off += 1;
-        idf.rtos.Task.delayMs(1000);
-    }
-}
-
-fn palette(ptr: ?*anyopaque) !void {
-    const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
-    const colors = [_]u24{
-        // Retro Neon Palette
-        0xFF0000, // Pure Red
-        0x00FF00, // Pure Green
-        0x0000FF, // Pure Blue
-        0xFF00FF, // Magenta
-        0x00FFFF, // Cyan
-        0xFFFF00, // Yellow
-        // Vaporwave Cyberpunk
-        0xFF0055, // Hot Pink
-        0x9900FF, // Deep Purple
-        0x0022FF, // Electric Blue
-        0x00FFCC, // Bright Teal
-        0xFF5500, // Neon Orange
-        0x330033, // Dim Night-Glow
-        // Aurora Borealis
-        0x00FF33, // Bright Mint
-        0x00AAFF, // Sky Blue
-        0x000088, // Deep Royal Blue
-        0x7700FF, // Violet
-        0x00FF88, // Emerald Green
-        0x113300, // Forest Undertone
-    };
-    while (true) {
-        for (colors) |rgb| {
-            const r = (rgb & 0xff0000) >> 16;
-            const g = (rgb & 0x00ff00) >> 8;
-            const b = (rgb & 0x0000ff);
-            log.info("rgb {x} {x} {x}", .{ r, g, b });
-            try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
-            try led.refresh(led_strip);
-            idf.rtos.Task.delayMs(1000);
-        }
-    }
-}
-
-fn allColors(ptr: ?*anyopaque) !void {
+fn _ledTask(ptr: ?*anyopaque) !void {
     const led_strip: led.LedStripHandle = @ptrCast(@alignCast(ptr.?));
 
     while (true) {
-        for (0..0xff) |r| {
-            for (0..0xff) |g| {
-                for (0..0xff) |b| {
-                    try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
-                    try led.refresh(led_strip);
-                    idf.rtos.Task.delayMs(1);
-                }
-            }
-        }
+        var rgb: u32 = 0;
+        if (!idf.rtos.Task.notifyWait(
+            0, // UBaseType notification index
+            0, // which bits to clear in the task's notification value before waiting
+            0xff_ff_ff_ff, //  which bits to clear in the task's notification value after the notification is received
+            &rgb, // Optional: pointer to receive the u32 value
+            idf.sys.portMAX_DELAY, // ticks to wait
+        )) continue;
+
+        const r = (rgb & 0xff0000) >> 16;
+        const g = (rgb & 0x00ff00) >> 8;
+        const b = (rgb & 0x0000ff);
+        log.info("rgb {x} {x} {x}", .{ r, g, b });
+        try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
+        try led.refresh(led_strip);
     }
 }
 
