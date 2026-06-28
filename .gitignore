@@ -8,3 +8,5 @@ sdkconfig
 *.lock
 /.zig-cache/
 /zig-out/
+/main/wifi_credentials.csv
+/sdkconfig.old

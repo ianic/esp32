@@ -21,8 +21,9 @@ fn main() !void {
         _ = try led.newRmtDevice(&strip_config, &rmt_config, &led_strip);
     }
 
-    const led_task = try idf.rtos.Task.create(ledTask, "led", 1024 * 4, led_strip, 5);
-    _ = try idf.rtos.Task.create(sendColorTask, "change color", 1024 * 4, led_task, 5);
+    // Increase stack size if you use logging in the functions, add >1K for logging
+    const led_task = try idf.rtos.Task.create(ledTask, "led", 1024, led_strip, 5);
+    _ = try idf.rtos.Task.create(sendColorTask, "change color", 512, led_task, 5);
 
     log.info("LED strip task started successfully", .{});
 }
@@ -56,13 +57,16 @@ fn sendColorTask(ptr: ?*anyopaque) callconv(.c) void {
                 0, // UBaseType notification index
             ) catch {};
             idf.rtos.Task.delayMs(2000);
+            // const hwm = idf.rtos.Task.getStackHighWaterMark(null);
+            // log.debug("sendColorTask stack high water mark {}", .{hwm});
         }
     }
 }
 
 fn ledTask(ptr: ?*anyopaque) callconv(.c) void {
-    _ledTask(ptr) catch |err| {
-        log.err("led strip task failed {}", .{err});
+    _ledTask(ptr) catch {
+        //log.err("led strip task failed {}", .{err});
+        @panic("led strip task failed");
     };
     // TODO delete task or panic or...
 }
@@ -83,9 +87,12 @@ fn _ledTask(ptr: ?*anyopaque) !void {
         const r = (rgb & 0xff0000) >> 16;
         const g = (rgb & 0x00ff00) >> 8;
         const b = (rgb & 0x0000ff);
-        log.info("rgb {x} {x} {x}", .{ r, g, b });
+        //log.debug("rgb {x} {x} {x}", .{ r, g, b });
         try led.setPixel(led_strip, 0, @truncate(r), @truncate(g), @truncate(b));
         try led.refresh(led_strip);
+
+        // const hwm = idf.rtos.Task.getStackHighWaterMark(null);
+        // log.debug("LedTask stack high water mark {}", .{hwm});
     }
 }
 
@@ -98,6 +105,5 @@ pub const std_options: std.Options = .{
         .Debug => .debug,
         else => .info,
     },
-    // Define logFn to override the std implementation
-    .logFn = idf.log.espLogFn,
+    .logFn = @import("log.zig").logFn,
 };

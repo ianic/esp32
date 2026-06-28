@@ -29,3 +29,4 @@ if(TARGET __idf_espressif__esp-dsp AND IDF_VERSION_MAJOR EQUAL 6)
     )
 endif()
 
+nvs_create_partition_image(nvs wifi_credentials.csv FLASH_IN_PROJECT)

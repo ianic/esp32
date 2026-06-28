@@ -33,9 +33,10 @@ echo Building: $project
 
 if [ "$rebuild" = true ]; then
     # rm -rf build
-    idf.py set-target esp32c3
+    # idf.py set-target esp32c3
     idf.py build -DZIG_PROJECT_ROOT=$project
     idf.py -p /dev/ttyUSB0 flash monitor
+    exit 0
 fi
 
 idf.py app -DZIG_PROJECT_ROOT=$project
