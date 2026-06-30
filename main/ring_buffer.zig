@@ -2,13 +2,21 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 
-pub fn RingBuffer(comptime T: type, comptime len: usize) type {
+pub fn RingBuffer(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        items: [len]T = undefined,
-        head: usize = len - 1,
+        items: []T,
+        head: usize,
         sequence: usize = 0,
+
+        pub fn init(items: []T) Self {
+            return .{
+                .items = items,
+                .head = items.len - 1,
+                .sequence = 0,
+            };
+        }
 
         pub fn add(self: *Self, t: T) void {
             const idx = self.next();
@@ -33,14 +41,14 @@ pub fn RingBuffer(comptime T: type, comptime len: usize) type {
         // Range is inclusive.
         pub fn sequenceRange(self: *Self) struct { usize, usize } {
             if (self.sequence == 0) return .{ 0, 0 };
-            if (self.sequence <= len) return .{ 1, self.sequence };
-            return .{ self.sequence - len + 1, self.sequence };
+            if (self.sequence <= self.items.len) return .{ 1, self.sequence };
+            return .{ self.sequence - self.items.len + 1, self.sequence };
         }
 
         pub fn count(self: *Self) usize {
             if (self.sequence == 0) return 0;
-            if (self.sequence < len) return self.sequence;
-            return len;
+            if (self.sequence < self.items.len) return self.sequence;
+            return self.items.len;
         }
 
         fn next(self: *Self) usize {
@@ -95,8 +103,8 @@ test RingBuffer {
     const T = struct {
         ts: u32 = 0,
     };
-
-    var cb: RingBuffer(T, 8) = .{};
+    var buf: [8]T = undefined;
+    var cb: RingBuffer(T) = .init(&buf);
 
     try testing.expectEqual(null, cb.tail());
     var s1, var s2 = cb.content();
@@ -206,5 +214,5 @@ const Reading = packed struct {
 
 test "size" {
     std.debug.print("reading size {}\n", .{@sizeOf(Reading)});
-    std.debug.print("reading size {}\n", .{@sizeOf(RingBuffer(Reading, 1024))});
+    std.debug.print("reading ring buffer size {}\n", .{@sizeOf(RingBuffer(Reading))});
 }
