@@ -7,27 +7,38 @@ pub fn build(b: *std.Build) !void {
     });
     const optimize = b.standardOptimizeOption(.{});
 
-    const project_root = b.option([]const u8, "project-root", "Relative path to the Zig source file") orelse "main/app.zig";
+    const project = b.option([]const u8, "project", "Project to use in cmake") orelse "blink";
 
-    const obj = b.addObject(.{
-        .name = "app_zig",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(project_root),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-    });
-    obj.root_module.addImport("esp_idf", idf_wrapped_modules(b));
-
-    const obj_install = b.addInstallArtifact(obj, .{
-        .dest_dir = .{
-            .override = .{
-                .custom = "obj",
+    const examples = [_][]const u8{
+        "blink",
+        "wifi",
+        "temp",
+    };
+    inline for (examples) |name| {
+        const obj = b.addObject(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("main/" ++ name ++ ".zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+        obj.root_module.addImport("idf", idf_wrapped_modules(b));
+        const obj_install = b.addInstallArtifact(obj, .{
+            .dest_dir = .{
+                .override = .{
+                    .custom = "obj",
+                },
             },
-        },
-    });
-    b.getInstallStep().dependOn(&obj_install.step);
+        });
+        b.getInstallStep().dependOn(&obj_install.step);
+
+        if (std.mem.eql(u8, name, project)) {
+            const install_file = b.addInstallFile(obj.getEmittedBin(), "obj/app_zig.o");
+            b.getInstallStep().dependOn(&install_file.step);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +118,7 @@ const esp_idf_exports = [_][]const u8{
     "wifi_remote", "timer",  "ledc",      "twai",      "pm",    "pthread",    "matter",
 };
 
-pub fn idf_wrapped_modules(b: *std.Build) *std.Build.Module {
+fn idf_wrapped_modules(b: *std.Build) *std.Build.Module {
     const src_path = std.fs.path.dirname(@src().file) orelse b.pathResolve(&.{"."});
     const imports_dir = b.pathJoin(&.{ src_path, "imports" });
 
@@ -143,13 +154,13 @@ pub fn idf_wrapped_modules(b: *std.Build) *std.Build.Module {
         top_imports.append(b.allocator, .{ .name = name, .module = mod }) catch @panic("OOM");
     }
 
-    return b.addModule("esp_idf", .{
+    return b.addModule("idf", .{
         .root_source_file = b.path(b.pathJoin(&.{ imports_dir, "idf.zig" })),
         .imports = top_imports.items,
     });
 }
 
-pub const espressif_targets: []const std.Target.Query = riscv_targets ++ xtensa_targets;
+const espressif_targets: []const std.Target.Query = riscv_targets ++ xtensa_targets;
 
 const riscv_targets: []const std.Target.Query = blk: {
     var result: []const std.Target.Query = &.{};

@@ -15,8 +15,8 @@ idf_component_register(
 # To use different project root
 # ZIG_EXAMPLE_ARG is passed as argument to zig build
 set(ZIG_EXAMPLE_ARG "") # default is main/app.zig
-if(ZIG_PROJECT_ROOT)
-  set(ZIG_EXAMPLE_ARG "-Dproject-root=${ZIG_PROJECT_ROOT}")
+if(ZIG_PROJECT)
+  set(ZIG_EXAMPLE_ARG "-Dproject=${ZIG_PROJECT}")
 endif()
 
 # Include the Zig build system 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const idf = @import("esp_idf");
+const idf = @import("idf");
 const sys = idf.sys;
 
 const log = std.log.scoped(.wifi);

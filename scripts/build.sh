@@ -5,7 +5,7 @@ cd $(git rev-parse --show-toplevel)
 
 # Initialize a default value for the variable
 rebuild=false
-project=main/app.zig
+project=blink
 
 if [ ! -d "build" ]; then
     rebuild=true
@@ -17,7 +17,7 @@ while getopts "rp:" opt; do
         rebuild=true
         ;;
     p)
-        project=main/"$OPTARG".zig # Captures the value passed with -p
+        project="$OPTARG" # Captures the value passed with -p
         ;;
     \?)
         echo "Invalid option: -$OPTARG" 1>&2
@@ -34,10 +34,10 @@ echo Building: $project
 if [ "$rebuild" = true ]; then
     # rm -rf build
     # idf.py set-target esp32c3
-    idf.py build -DZIG_PROJECT_ROOT=$project
+    idf.py build -DZIG_PROJECT=$project
     idf.py -p /dev/ttyUSB0 flash monitor
     exit 0
 fi
 
-idf.py app -DZIG_PROJECT_ROOT=$project
+idf.py app -DZIG_PROJECT=$project
 idf.py -p /dev/ttyUSB0 app-flash monitor

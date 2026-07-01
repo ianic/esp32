@@ -1,5 +1,5 @@
 const std = @import("std");
-const idf = @import("esp_idf");
+const idf = @import("idf");
 
 pub fn logFn(
     comptime level: std.log.Level,

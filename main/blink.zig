@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const idf = @import("esp_idf");
+const idf = @import("idf");
 const ver = idf.ver.Version;
 const mem = std.mem;
 const led = idf.led;
