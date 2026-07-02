@@ -13,7 +13,7 @@ const Readings = @import("ring_buffer.zig").RingBuffer(Reading);
 var device_id: u32 = 0;
 var session_id: u32 = 0;
 var sink_addr: lwip.SockAddrIn = undefined;
-var socket: lwip.Socket = undefined;
+var update_socket: lwip.Socket = undefined;
 
 fn main() !void {
     try idf.nvs.flashInitOrErase();
@@ -22,7 +22,7 @@ fn main() !void {
     // log.debug("heap free size 1: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
 
     {
-        socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
+        update_socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
         sink_addr.sin_family = sys.AF_INET;
         sink_addr.sin_port = lwip.htons(4242);
         sink_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.181");
@@ -35,7 +35,7 @@ fn main() !void {
     const master_task = try task.create(master, "master", 4 * 1024, null, 2);
     // priority 19 above lwip
     _ = try task.create(readTempWorker, "read temp", 4 * 1024, master_task, 19);
-    _ = try task.create(socketAccept, "socket accept", 4 * 1024, master_task, 2);
+    _ = try task.create(acceptWorker, "socket accept", 4 * 1024, master_task, 2);
 
     //log.debug("heap free size 2: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
 }
@@ -80,18 +80,31 @@ fn master(_: ?*anyopaque) callconv(.c) void {
 fn _master() !void {
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"32bit" = true });
     const gpa = heap.allocator();
-    const n = (heap.largestFreeBlock() - 32) / @sizeOf(Reading);
+    const count: u16 = @min(
+        (heap.largestFreeBlock() - 32) / @sizeOf(Reading),
+        std.math.maxInt(u16),
+    );
     log.debug("allocating {} readings, {} bytes, {} largestFreeBlock", .{
-        n,
-        n * @sizeOf(Reading),
+        count,
+        count * @sizeOf(Reading),
         heap.largestFreeBlock(),
     });
-    const readings_buf = try gpa.alloc(Reading, n);
+    const readings_buf = try gpa.alloc(Reading, count);
     var readings: Readings = .init(readings_buf);
+
+    { // DUMMY
+        for (0..count) |i| {
+            readings.add(.{
+                .ts = i,
+                .temp = @truncate(i),
+            });
+        }
+    }
 
     // const hwm = task.getStackHighWaterMark(null);
     // log.debug("master stack high water mark {}", .{hwm});
 
+    var buf: [1460]u8 = undefined;
     while (true) {
         var temp: u32 = 0;
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &temp, 0)) {
@@ -101,12 +114,11 @@ fn _master() !void {
             };
             readings.add(reading);
 
-            var buf: [1472]u8 = undefined;
             const msg = writeUpdateMessage(&buf, &readings) catch |err| {
                 log.err("writeUpdateMessage {s}", .{@errorName(err)});
                 continue;
             };
-            const msg_len = socket.sendTo(msg, 0, @ptrCast(&sink_addr), @sizeOf(lwip.SockAddrIn)) catch |err| {
+            const msg_len = update_socket.sendTo(msg, 0, @ptrCast(&sink_addr), @sizeOf(lwip.SockAddrIn)) catch |err| {
                 log.err("udp send {s}", .{@errorName(err)});
                 continue;
             };
@@ -121,8 +133,46 @@ fn _master() !void {
                 msg_len,
             });
         }
-        var state_socket: u32 = 0;
-        if (task.notifyWait(socket_notification_index, clear_none, clear_all, &state_socket, rtos.msToTicks(500))) {}
+        var fd: u32 = 0;
+        if (task.notifyWait(socket_notification_index, clear_none, clear_all, &fd, rtos.msToTicks(500))) {
+            const socket: lwip.Socket = .{ .fd = @intCast(fd) };
+            defer socket.close() catch {};
+            sendState(socket, &readings, &buf) catch |err| {
+                log.err("send state failed {s}", .{@errorName(err)});
+            };
+        }
+    }
+}
+
+fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
+    var w = std.Io.Writer.fixed(buf);
+    // identification
+    try w.writeInt(u32, device_id, .little);
+    try w.writeInt(u32, session_id, .little);
+    // TODO treba li mi timestamp i message type temp reading state, temp reading update
+    // my state
+    const min_seq, const max_seq = readings.sequenceRange();
+    try w.writeInt(u32, min_seq, .little);
+    try w.writeInt(u32, max_seq, .little);
+    try w.writeInt(u16, @intCast(readings.count()), .little);
+
+    var seq = min_seq;
+    var iter = readings.iterator();
+    while (iter.next()) |r| {
+        if (w.unusedCapacityLen() < 4 + 4 + 2) {
+            while (w.end > 0) {
+                const n = try socket.send(w.buffered(), 0);
+                _ = w.consume(n);
+            }
+        }
+        try w.writeInt(u32, seq, .little);
+        try w.writeInt(u32, r.ts, .little);
+        try w.writeInt(u16, r.temp, .little);
+        seq += 1;
+    }
+    while (w.end > 0) {
+        const n = try socket.send(w.buffered(), 0);
+        _ = w.consume(n);
     }
 }
 
@@ -167,7 +217,7 @@ fn writeUpdateMessage(buf: []u8, readings: *Readings) ![]const u8 {
         try w.writeInt(u32, r.ts, .little);
         try w.writeInt(u16, r.temp, .little);
     }
-    return buf[0..w.end];
+    return w.buffered();
 }
 
 pub fn deviceID() u32 {
@@ -186,10 +236,27 @@ fn timestamp() u32 {
     return sec;
 }
 
-fn socketAccept(ptr: ?*anyopaque) callconv(.c) void {
+fn acceptWorker(ptr: ?*anyopaque) callconv(.c) void {
     const hnd: task.Handle = @ptrCast(@alignCast(ptr.?));
-    _ = hnd;
+    accept(hnd) catch |err| {
+        log.err("accept task failed {s}", .{@errorName(err)});
+    };
+}
+fn accept(hnd: task.Handle) !void {
+    var addr: lwip.SockAddrIn = undefined;
+    addr.sin_family = sys.AF_INET;
+    addr.sin_port = lwip.htons(4243);
+    addr.sin_addr.s_addr = idf.sys.ipaddr_addr("0.0.0.0");
+
+    var tcp_socket = try lwip.Socket.create(idf.sys.AF_INET, sys.SOCK_STREAM, 0);
+    try tcp_socket.bind(@ptrCast(&addr), @sizeOf(lwip.SockAddrIn));
+    try tcp_socket.listen(1);
+
     while (true) {
-        task.delayMs(1000);
+        const conn = try tcp_socket.accept(null, null);
+        task.notify(hnd, @intCast(conn.fd), sys.eSetValueWithoutOverwrite, socket_notification_index) catch |err| {
+            try conn.close();
+            log.err("accept {s}", .{@errorName(err)});
+        };
     }
 }

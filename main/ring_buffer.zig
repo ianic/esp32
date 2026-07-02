@@ -96,6 +96,35 @@ pub fn RingBuffer(comptime T: type) type {
                 return .{ slice[i], slice[0..i] };
             }
         };
+
+        pub fn forwardIterator(self: *Self) ForwardIterator {
+            const ls, const rs = self.content();
+            return .{
+                .s1 = ls,
+                .s2 = rs,
+            };
+        }
+
+        pub const ForwardIterator = struct {
+            s1: []T,
+            s2: []T,
+
+            pub fn next(itr: *ForwardIterator) ?T {
+                if (itr.s2.len == 0 and itr.s1.len == 0) {
+                    return null;
+                }
+                if (itr.s1.len > 0) {
+                    const value, itr.s1 = left(itr.s1);
+                    return value;
+                }
+                const value, itr.s2 = left(itr.s2);
+                return value;
+            }
+
+            fn left(slice: []T) struct { T, []T } {
+                return .{ slice[0], slice[1..] };
+            }
+        };
     };
 }
 
@@ -201,6 +230,14 @@ test RingBuffer {
         while (iter.next()) |v| {
             try testing.expectEqual(i, v.ts);
             i -= 1;
+            //std.debug.print("{}\n", .{v});
+        }
+
+        i = 6;
+        var fi = cb.forwardIterator();
+        while (fi.next()) |v| {
+            try testing.expectEqual(i, v.ts);
+            i += 1;
             //std.debug.print("{}\n", .{v});
         }
     }
