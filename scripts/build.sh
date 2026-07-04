@@ -29,7 +29,7 @@ shift $((OPTIND - 1))
 
 echo Building: $project
 
-. ../esp-idf/export.sh
+. esp-idf/export.sh
 
 if [ "$rebuild" = true ]; then
     # rm -rf build

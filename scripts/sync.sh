@@ -8,7 +8,7 @@ mkdir -p include
 mkdir -p imports
 mkdir -p patches
 
-rsync -av ../zig-esp-idf-sample/cmake/ cmake/
-rsync -av ../zig-esp-idf-sample/include/ include/
-rsync -av ../zig-esp-idf-sample/imports/ imports/
-rsync -av ../zig-esp-idf-sample/patches/ patches/
+rsync -av zig-esp-idf-sample/cmake/ cmake/
+rsync -av zig-esp-idf-sample/include/ include/
+rsync -av zig-esp-idf-sample/imports/ imports/
+rsync -av zig-esp-idf-sample/patches/ patches/
