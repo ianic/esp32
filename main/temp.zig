@@ -12,7 +12,7 @@ const Readings = @import("ring_buffer.zig").RingBuffer(Reading);
 
 var device_id: u32 = 0;
 var session_id: u32 = 0;
-var sink_addr: lwip.SockAddrIn = undefined;
+var update_addr: lwip.SockAddrIn = undefined;
 var update_socket: lwip.Socket = undefined;
 
 fn main() !void {
@@ -23,14 +23,11 @@ fn main() !void {
 
     {
         update_socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
-        sink_addr.sin_family = sys.AF_INET;
-        sink_addr.sin_port = lwip.htons(4242);
-        sink_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.181");
+        update_addr.sin_family = sys.AF_INET;
+        update_addr.sin_port = lwip.htons(4242);
+        update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.181");
     }
-    {
-        device_id = deviceID();
-        session_id = timestamp();
-    }
+    device_id = deviceID();
 
     const master_task = try task.create(master, "master", 4 * 1024, null, 2);
     // priority 19 above lwip
@@ -80,7 +77,7 @@ fn master(_: ?*anyopaque) callconv(.c) void {
 fn _master() !void {
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"32bit" = true });
     const gpa = heap.allocator();
-    const count: u16 = @min(
+    const count: usize = @min(
         (heap.largestFreeBlock() - 32) / @sizeOf(Reading),
         std.math.maxInt(u16),
     );
@@ -105,37 +102,32 @@ fn _master() !void {
     // log.debug("master stack high water mark {}", .{hwm});
 
     var buf: [1460]u8 = undefined;
+    var val: u32 = 0;
     while (true) {
-        var temp: u32 = 0;
-        if (task.notifyWait(temp_notification_index, clear_none, clear_all, &temp, 0)) {
+        if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
             const reading: Reading = .{
                 .ts = timestamp(),
-                .temp = @intCast(temp),
+                .temp = @intCast(val),
             };
+            if (session_id == 0) session_id = reading.ts;
             readings.add(reading);
-
-            const msg = writeUpdateMessage(&buf, &readings) catch |err| {
-                log.err("writeUpdateMessage {s}", .{@errorName(err)});
-                continue;
-            };
-            const msg_len = update_socket.sendTo(msg, 0, @ptrCast(&sink_addr), @sizeOf(lwip.SockAddrIn)) catch |err| {
-                log.err("udp send {s}", .{@errorName(err)});
+            sendUpdate(&readings, &buf) catch |err| {
+                log.err("send update failed {}", .{err});
                 continue;
             };
 
-            log.debug("{d} got reading: {d} in °C: {d} and {d}/16 readings: {d} {}, msg_len: {d}", .{
+            log.debug("{d} got reading: {d} in °C: {d} and {d}/16 readings: {d} {}", .{
                 reading.ts,
-                temp,
-                temp / 16,
-                temp % 16,
+                reading.temp,
+                reading.temp / 16,
+                reading.temp % 16,
                 readings.count(),
                 readings.sequenceRange(),
-                msg_len,
             });
         }
-        var fd: u32 = 0;
-        if (task.notifyWait(socket_notification_index, clear_none, clear_all, &fd, rtos.msToTicks(500))) {
-            const socket: lwip.Socket = .{ .fd = @intCast(fd) };
+
+        if (task.notifyWait(socket_notification_index, clear_none, clear_all, &val, rtos.msToTicks(500))) {
+            const socket: lwip.Socket = .{ .fd = @intCast(val) };
             defer socket.close() catch {};
             sendState(socket, &readings, &buf) catch |err| {
                 log.err("send state failed {s}", .{@errorName(err)});
@@ -146,29 +138,25 @@ fn _master() !void {
 
 fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
+
+    try w.writeByte(0); // message type = temp
+    try w.writeByte(1); // update or state
+
     // identification
     try w.writeInt(u32, device_id, .little);
     try w.writeInt(u32, session_id, .little);
-    // TODO treba li mi timestamp i message type temp reading state, temp reading update
-    // my state
-    const min_seq, const max_seq = readings.sequenceRange();
-    try w.writeInt(u32, min_seq, .little);
-    try w.writeInt(u32, max_seq, .little);
-    try w.writeInt(u16, @intCast(readings.count()), .little);
 
-    var seq = min_seq;
+    try w.writeInt(u16, @intCast(readings.count()), .little);
     var iter = readings.iterator();
     while (iter.next()) |r| {
-        if (w.unusedCapacityLen() < 4 + 4 + 2) {
+        if (w.unusedCapacityLen() < 4 + 2) {
             while (w.end > 0) {
                 const n = try socket.send(w.buffered(), 0);
                 _ = w.consume(n);
             }
         }
-        try w.writeInt(u32, seq, .little);
         try w.writeInt(u32, r.ts, .little);
         try w.writeInt(u16, r.temp, .little);
-        seq += 1;
     }
     while (w.end > 0) {
         const n = try socket.send(w.buffered(), 0);
@@ -181,43 +169,43 @@ const Reading = packed struct {
     temp: u16,
 };
 
-pub const panic = idf.esp_panic.panic;
-pub const std_options: std.Options = .{
-    .log_level = switch (@import("builtin").mode) {
-        .Debug => .debug,
-        else => .info,
-    },
-    .logFn = @import("log.zig").logFn,
-};
-
-fn writeUpdateMessage(buf: []u8, readings: *Readings) ![]const u8 {
+fn sendUpdate(readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
+
+    try w.writeByte(0); // message type = temp
+    try w.writeByte(0); // update or state
 
     // identification
     try w.writeInt(u32, device_id, .little);
     try w.writeInt(u32, session_id, .little);
-    // my state
-    const min_seq, const max_seq = readings.sequenceRange();
-    try w.writeInt(u32, min_seq, .little);
-    try w.writeInt(u32, max_seq, .little);
-    // readings
-    const count: u8 = @min(
-        (buf.len - w.buffered().len - 5) / 6,
-        max_seq - min_seq + 1,
-        255,
-        //16,
-    );
-    //
-    try w.writeInt(u8, count, .little);
-    try w.writeInt(u32, max_seq, .little);
 
+    // number of readings which fit into buf
+    const count: u16 = @min(
+        (w.unusedCapacityLen() - 2) / 6,
+        readings.count(),
+        std.math.maxInt(u16),
+    );
+
+    //
+    try w.writeInt(u16, count, .little);
     var iter = readings.iterator();
-    for (0..count) |_| {
-        const r = iter.next().?;
+    var skip: usize = readings.count() - count;
+    var added: usize = 0;
+    while (iter.next()) |r| {
+        if (skip > 0) {
+            skip -= 1;
+            continue;
+        }
+        added += 1;
         try w.writeInt(u32, r.ts, .little);
         try w.writeInt(u16, r.temp, .little);
     }
-    return w.buffered();
+    log.debug(
+        "readings count: {} count: {} skip: {} added: {}",
+        .{ readings.count(), count, skip, added },
+    );
+
+    _ = try update_socket.sendTo(w.buffered(), 0, @ptrCast(&update_addr), @sizeOf(lwip.SockAddrIn));
 }
 
 pub fn deviceID() u32 {
@@ -260,3 +248,12 @@ fn accept(hnd: task.Handle) !void {
         };
     }
 }
+
+pub const panic = idf.esp_panic.panic;
+pub const std_options: std.Options = .{
+    .log_level = switch (@import("builtin").mode) {
+        .Debug => .debug,
+        else => .info,
+    },
+    .logFn = @import("log.zig").logFn,
+};

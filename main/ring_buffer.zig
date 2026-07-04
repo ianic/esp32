@@ -67,7 +67,7 @@ pub fn RingBuffer(comptime T: type) type {
         }
 
         /// Backward iterator
-        pub fn iterator(self: *Self) Iterator {
+        pub fn backwardIterator(self: *Self) BackwardIterator {
             const ls, const rs = self.content();
             return .{
                 .s1 = ls,
@@ -75,11 +75,11 @@ pub fn RingBuffer(comptime T: type) type {
             };
         }
 
-        pub const Iterator = struct {
+        pub const BackwardIterator = struct {
             s1: []T,
             s2: []T,
 
-            pub fn next(itr: *Iterator) ?T {
+            pub fn next(itr: *BackwardIterator) ?T {
                 if (itr.s2.len == 0 and itr.s1.len == 0) {
                     return null;
                 }
@@ -97,7 +97,7 @@ pub fn RingBuffer(comptime T: type) type {
             }
         };
 
-        pub fn forwardIterator(self: *Self) ForwardIterator {
+        pub fn iterator(self: *Self) ForwardIterator {
             const ls, const rs = self.content();
             return .{
                 .s1 = ls,
@@ -162,7 +162,7 @@ test RingBuffer {
     // backward iterator 7,6,5,4,3,2,1
     {
         var i: usize = 7;
-        var iter = cb.iterator();
+        var iter = cb.backwardIterator();
         while (iter.next()) |v| {
             try testing.expectEqual(i, v.ts);
             i -= 1;
@@ -226,7 +226,7 @@ test RingBuffer {
     // iterator: 13,12,11,10,9,8,7,6
     {
         var i: usize = 13;
-        var iter = cb.iterator();
+        var iter = cb.backwardIterator();
         while (iter.next()) |v| {
             try testing.expectEqual(i, v.ts);
             i -= 1;
@@ -234,7 +234,7 @@ test RingBuffer {
         }
 
         i = 6;
-        var fi = cb.forwardIterator();
+        var fi = cb.iterator();
         while (fi.next()) |v| {
             try testing.expectEqual(i, v.ts);
             i += 1;

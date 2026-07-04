@@ -39,6 +39,8 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&install_file.step);
         }
     }
+
+    buildHost(b, optimize);
 }
 
 // ---------------------------------------------------------------------------
@@ -249,3 +251,32 @@ const xtensa_targets: []const std.Target.Query = blk: {
     }
     break :blk result;
 };
+
+fn buildHost(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
+    const target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .cpu_model = .native,
+        .os_tag = .linux,
+        .abi = .gnu,
+    });
+
+    const sink = b.addExecutable(.{
+        .name = "sink",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(sink);
+
+    const state = b.addExecutable(.{
+        .name = "state",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/state.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(state);
+}
