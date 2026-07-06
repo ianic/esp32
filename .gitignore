@@ -12,3 +12,4 @@ sdkconfig
 /sdkconfig.old
 /esp-idf/
 /zig-esp-idf-sample/
+/data/

@@ -6,7 +6,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
-    const root_dir = try std.Io.Dir.openDirAbsolute(io, "/home/ianic/Code/esp32/output", .{});
+    const root_dir = try std.Io.Dir.openDirAbsolute(io, "/home/ianic/Code/esp32/data", .{});
 
     const addr = try std.Io.net.IpAddress.parse("192.168.207.145", 4243);
     const conn = try addr.connect(io, .{
