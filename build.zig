@@ -255,7 +255,8 @@ const xtensa_targets: []const std.Target.Query = blk: {
 fn buildHost(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
-        .cpu_model = .native,
+        .cpu_model = .baseline,
+        //.cpu_model = .native,
         .os_tag = .linux,
         .abi = .gnu,
     });

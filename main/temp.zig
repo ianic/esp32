@@ -25,7 +25,8 @@ fn main() !void {
         update_socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
         update_addr.sin_family = sys.AF_INET;
         update_addr.sin_port = lwip.htons(4242);
-        update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.181");
+        //update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.250");
+        update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("224.0.0.1");
     }
     device_id = deviceID();
 
@@ -89,15 +90,6 @@ fn _master() !void {
     const readings_buf = try gpa.alloc(Reading, count);
     var readings: Readings = .init(readings_buf);
 
-    { // DUMMY
-        for (0..count) |i| {
-            readings.add(.{
-                .ts = i,
-                .temp = @truncate(i),
-            });
-        }
-    }
-
     // const hwm = task.getStackHighWaterMark(null);
     // log.debug("master stack high water mark {}", .{hwm});
 
@@ -109,8 +101,15 @@ fn _master() !void {
                 .ts = timestamp(),
                 .temp = @intCast(val),
             };
-            if (session_id == 0) session_id = reading.ts;
-            readings.add(reading);
+            if (readings.last()) |last| {
+                if (last.temp != reading.temp) {
+                    readings.add(reading);
+                }
+            } else {
+                session_id = reading.ts;
+                readings.add(reading);
+            }
+
             sendUpdate(&readings, &buf) catch |err| {
                 log.err("send update failed {}", .{err});
                 continue;
@@ -200,11 +199,10 @@ fn sendUpdate(readings: *Readings, buf: []u8) !void {
         try w.writeInt(u32, r.ts, .little);
         try w.writeInt(u16, r.temp, .little);
     }
-    log.debug(
-        "readings count: {} count: {} skip: {} added: {}",
-        .{ readings.count(), count, skip, added },
-    );
-
+    // log.debug(
+    //     "readings count: {} count: {} skip: {} added: {}",
+    //     .{ readings.count(), count, skip, added },
+    // );
     _ = try update_socket.sendTo(w.buffered(), 0, @ptrCast(&update_addr), @sizeOf(lwip.SockAddrIn));
 }
 

@@ -1,0 +1,25 @@
+# da se ghosty ne zali
+infocmp -x xterm-ghostty | ssh marvin.lan -- tic -x -
+
+
+
+scp ~/.ssh/authorized_keys2 marvin.lan:~/.ssh/authorized_keys
+scp ~/.ssh/id_rsa marvin.lan:~/.ssh/
+scp ~/.ssh/id_rsa.pub marvin.lan:~/.ssh/
+
+
+
+sudo nmcli connection modify DOV ipv4.addresses 192.168.207.250/24
+sudo nmcli connection modify DOV ipv4.gateway 192.168.207.1
+sudo nmcli connection modify DOV ipv4.dns "1.1.1.1,8.8.8.8"
+sudo nmcli connection modify DOV ipv4.method manual
+sudo nmcli connection up     DOV
+
+
+
+sudo nano /etc/systemd/logind.conf
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+
+sudo systemctl restart systemd-logind
