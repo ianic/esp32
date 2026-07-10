@@ -261,23 +261,20 @@ fn buildHost(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .abi = .gnu,
     });
 
-    const sink = b.addExecutable(.{
-        .name = "sink",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    b.installArtifact(sink);
-
-    const state = b.addExecutable(.{
-        .name = "state",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/state.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    b.installArtifact(state);
+    const binaries = [_][]const u8{
+        "sink",
+        "state",
+        "server",
+    };
+    inline for (binaries) |name| {
+        const exe = b.addExecutable(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/" ++ name ++ ".zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        b.installArtifact(exe);
+    }
 }

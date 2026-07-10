@@ -2,38 +2,19 @@ const std = @import("std");
 const Io = std.Io;
 const log = std.log.scoped(.main);
 const assert = std.debug.assert;
-
-pub const ip_mreq = extern struct {
-    imr_multiaddr: [4]u8, // The IPv4 multicast group address to join/leave
-    imr_interface: [4]u8, // The local network interface IPv4 address to listen on
-};
+const testing = std.testing;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     //const gpa = init.gpa;
 
-    const root_dir = try std.Io.Dir.openDirAbsolute(io, "/home/ianic/data", .{});
+    const root_dir = try std.Io.Dir.openDirAbsolute(io, "/home/ianic/data/1", .{});
     defer root_dir.close(io);
 
-    //"192.168.207.250"
     const listen_addr = try std.Io.net.IpAddress.parse("0.0.0.0", 4242);
     const socket = try listen_addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer socket.close(io);
-
-    {
-        const mcast_addr = try std.Io.net.IpAddress.parse("224.0.0.1", 0);
-        // Join the multicast group
-        const mreq = ip_mreq{
-            .imr_multiaddr = mcast_addr.ip4.bytes,
-            .imr_interface = listen_addr.ip4.bytes,
-        };
-        try std.posix.setsockopt(
-            socket.handle,
-            std.posix.IPPROTO.IP,
-            std.posix.IP.ADD_MEMBERSHIP,
-            std.mem.asBytes(&mreq),
-        );
-    }
+    try joinMcast(socket.handle, try std.Io.net.IpAddress.parse("224.0.0.1", 0));
 
     var packet_buf: [65536]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
@@ -128,22 +109,34 @@ fn lastRec(comptime T: type, io: Io, file: Io.File) !?T {
     return try T.parse(&r);
 }
 
-const Temp = struct {
+pub const Temp = struct {
     ts: u32,
     temp: u16,
 
     const bytes = 6;
     const empty: Temp = .{ .ts = 0, .temp = 0 };
 
-    fn parse(r: *Io.Reader) !Temp {
+    pub fn parse(r: *Io.Reader) !Temp {
         const ts = try r.takeInt(u32, .little);
         const temp = try r.takeInt(u16, .little);
         return .{ .ts = ts, .temp = temp };
     }
 
-    fn encode(self: Temp, w: *Io.Writer) !void {
+    pub fn encode(self: Temp, w: *Io.Writer) !void {
         try w.writeInt(u32, self.ts, .little);
         try w.writeInt(u16, self.temp, .little);
+    }
+
+    pub fn value(self: Temp) f64 {
+        const mask: u16 = 0xf800;
+        const neg = self.temp & mask == mask;
+        const sign: f64 = if (neg) -1 else 1;
+        return sign * @as(f64, @floatFromInt(self.temp & ~mask)) / 16;
+    }
+
+    test "negative" {
+        const n1 = 0b11111_11100100000;
+        try testing.expectEqual(-0b11100100000 / 16, (Temp{ .ts = 0, .temp = n1 }).value());
     }
 };
 
@@ -167,3 +160,25 @@ const Header = struct {
         };
     }
 };
+
+pub fn joinMcast(fd: std.os.linux.socket_t, addr: Io.net.IpAddress) !void {
+    const ip_mreq = extern struct {
+        imr_multiaddr: [4]u8, // The IPv4 multicast group address to join/leave
+        imr_interface: [4]u8, // The local network interface IPv4 address to listen on
+    };
+
+    const mreq = ip_mreq{
+        .imr_multiaddr = addr.ip4.bytes,
+        .imr_interface = .{ 0, 0, 0, 0 },
+    };
+    try std.posix.setsockopt(
+        fd,
+        std.posix.IPPROTO.IP,
+        std.posix.IP.ADD_MEMBERSHIP,
+        std.mem.asBytes(&mreq),
+    );
+}
+
+test {
+    _ = Temp;
+}
