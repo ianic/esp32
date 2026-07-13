@@ -1,0 +1,12 @@
+[Unit]
+Description=Data sink service
+After=network.target
+
+[Service]
+WorkingDirectory=/home/ianic/.local/grafana
+ExecStart=/home/ianic/.local/grafana/bin/grafana server
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
