@@ -1,18 +1,23 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) !void {
+    const optimize = b.standardOptimizeOption(.{});
+    const project = b.option([]const u8, "project", "Project to use in cmake") orelse "blink";
+
+    try buildEsp32(b, optimize, project);
+    buildHost(b, optimize);
+}
+
+fn buildEsp32(b: *std.Build, optimize: std.builtin.OptimizeMode, project: []const u8) !void {
     const target = b.standardTargetOptions(.{
         .whitelist = espressif_targets,
         .default_target = espressif_targets[0],
     });
-    const optimize = b.standardOptimizeOption(.{});
-
-    const project = b.option([]const u8, "project", "Project to use in cmake") orelse "blink";
-
     const msg_mod = b.addModule("msg", .{
         .root_source_file = b.path("src/message.zig"),
     });
 
+    const wrapped_modules = idfWrappedModules(b);
     const examples = [_][]const u8{
         "blink",
         "wifi",
@@ -28,7 +33,7 @@ pub fn build(b: *std.Build) !void {
                 .link_libc = true,
             }),
         });
-        obj.root_module.addImport("idf", idf_wrapped_modules(b));
+        obj.root_module.addImport("idf", wrapped_modules);
         obj.root_module.addImport("msg", msg_mod);
         const obj_install = b.addInstallArtifact(obj, .{
             .dest_dir = .{
@@ -44,8 +49,6 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&install_file.step);
         }
     }
-
-    buildHost(b, optimize);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +128,7 @@ const esp_idf_exports = [_][]const u8{
     "wifi_remote", "timer",  "ledc",      "twai",      "pm",    "pthread",    "matter",
 };
 
-fn idf_wrapped_modules(b: *std.Build) *std.Build.Module {
+fn idfWrappedModules(b: *std.Build) *std.Build.Module {
     const src_path = std.fs.path.dirname(@src().file) orelse b.pathResolve(&.{"."});
     const imports_dir = b.pathJoin(&.{ src_path, "imports" });
 

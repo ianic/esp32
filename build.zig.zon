@@ -2,7 +2,7 @@
     .name = .esp32,
     .version = "0.0.0",
     .fingerprint = 0x86375cb2d68c5b52,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.1398+cb5635714",
     .dependencies = .{},
     .paths = .{
         "build.zig",
