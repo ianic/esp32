@@ -25,6 +25,18 @@ pub fn RingBuffer(comptime T: type) type {
             self.sequence += 1;
         }
 
+        pub fn append(self: *Self, t: T) void {
+            if (self.sequence >= 2) {
+                const l0 = self.items[self.head];
+                const l1 = self.items[if (self.head == 0) self.items.len - 1 else self.head - 1];
+                if (l0.equal(l1)) {
+                    self.items[self.head] = t;
+                    return;
+                }
+            }
+            self.add(t);
+        }
+
         pub fn last(self: *Self) ?T {
             if (self.sequence == 0) return null;
             return self.items[self.head];
@@ -244,12 +256,41 @@ test RingBuffer {
     try testing.expectEqual(8, cb.count());
 }
 
-const Reading = packed struct {
-    ts: u32,
-    temp: u16,
-};
+test "append" {
+    const Temp = @import("message.zig").Temp;
+    const Readings = RingBuffer(Temp);
 
-test "size" {
-    std.debug.print("reading size {}\n", .{@sizeOf(Reading)});
-    std.debug.print("reading ring buffer size {}\n", .{@sizeOf(RingBuffer(Reading))});
+    var buf: [4]Temp = undefined;
+    var readings: Readings = .init(&buf);
+
+    // first two are added
+    readings.append(.{ .temp = 1, .ts = 1 });
+    readings.append(.{ .temp = 1, .ts = 2 });
+    try testing.expectEqual(2, readings.count());
+
+    // replacing last with same
+    readings.append(.{ .temp = 1, .ts = 3 });
+    try testing.expectEqual(2, readings.count());
+
+    // replacing last with different
+    readings.append(.{ .temp = 3, .ts = 5 });
+    try testing.expectEqual(2, readings.count());
+
+    // next is appended
+    readings.append(.{ .temp = 3, .ts = 6 });
+    try testing.expectEqual(3, readings.count());
+
+    try testing.expectEqual(3, readings.last().?.temp);
+    try testing.expectEqual(6, readings.last().?.ts);
+
+    readings.append(.{ .temp = 5, .ts = 7 });
+    try testing.expectEqual(3, readings.count());
+    readings.append(.{ .temp = 7, .ts = 8 });
+    try testing.expectEqual(4, readings.count());
+
+    // overflow to the pos 0
+    readings.append(.{ .temp = 8, .ts = 9 });
+    try testing.expectEqual(Temp{ .temp = 8, .ts = 9 }, buf[0]);
+    readings.append(.{ .temp = 9, .ts = 11 });
+    try testing.expectEqual(Temp{ .temp = 9, .ts = 11 }, buf[0]);
 }

@@ -5,28 +5,28 @@ const lwip = idf.lwip;
 const rtos = idf.rtos;
 const task = rtos.Task;
 const log = std.log.scoped(.main);
+const msg = @import("msg");
 
 var wifi: @import("WiFi.zig") = .{};
 const TempSensor = @import("temp_sensor.zig").TempSensor;
-const Readings = @import("ring_buffer.zig").RingBuffer(Reading);
+const Readings = msg.RingBuffer(msg.Temp);
 
 var device_id: u32 = 0;
 var session_id: u32 = 0;
-var update_addr: lwip.SockAddrIn = undefined;
-var update_socket: lwip.Socket = undefined;
+var bcast: struct {
+    addr: lwip.SockAddrIn,
+    socket: lwip.Socket,
+} = undefined;
 
 fn main() !void {
     try idf.nvs.flashInitOrErase();
     try wifi.initNvs();
-    // var heap = idf.heap.HeapCapsAllocator.init(.{ .@"8bit" = true });
-    // log.debug("heap free size 1: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
 
     {
-        update_socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
-        update_addr.sin_family = sys.AF_INET;
-        update_addr.sin_port = lwip.htons(4242);
-        //update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("192.168.207.250");
-        update_addr.sin_addr.s_addr = idf.sys.ipaddr_addr("224.0.0.1");
+        bcast.socket = try lwip.Socket.create(idf.sys.AF_INET, idf.sys.SOCK_DGRAM, 0);
+        bcast.addr.sin_family = sys.AF_INET;
+        bcast.addr.sin_port = lwip.htons(4242);
+        bcast.addr.sin_addr.s_addr = idf.sys.ipaddr_addr("224.0.0.1");
     }
     device_id = deviceID();
 
@@ -76,41 +76,32 @@ fn master(_: ?*anyopaque) callconv(.c) void {
 }
 
 fn _master() !void {
+    // allocate readings in the largest heap free block
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"32bit" = true });
     const gpa = heap.allocator();
     const count: usize = @min(
-        (heap.largestFreeBlock() - 32) / @sizeOf(Reading),
+        (heap.largestFreeBlock() - 32) / @sizeOf(msg.Temp),
         std.math.maxInt(u16),
     );
     log.debug("allocating {} readings, {} bytes, {} largestFreeBlock", .{
         count,
-        count * @sizeOf(Reading),
+        count * @sizeOf(msg.Temp),
         heap.largestFreeBlock(),
     });
-    const readings_buf = try gpa.alloc(Reading, count);
+    const readings_buf = try gpa.alloc(msg.Temp, count);
     var readings: Readings = .init(readings_buf);
 
-    // const hwm = task.getStackHighWaterMark(null);
-    // log.debug("master stack high water mark {}", .{hwm});
+    var net_buf: [1460]u8 = undefined;
 
-    var buf: [1460]u8 = undefined;
-    var val: u32 = 0;
     while (true) {
+        var val: u32 = 0;
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
-            const reading: Reading = .{
-                .ts = timestamp(),
-                .temp = @intCast(val),
-            };
-            if (readings.last()) |last| {
-                if (last.temp != reading.temp) {
-                    readings.add(reading);
-                }
-            } else {
+            const reading: msg.Temp = .{ .ts = timestamp(), .temp = @intCast(val) };
+            if (session_id == 0) {
                 session_id = reading.ts;
-                readings.add(reading);
             }
-
-            sendUpdate(&readings, &buf) catch |err| {
+            readings.append(reading);
+            sendUpdate(&readings, &net_buf) catch |err| {
                 log.err("send update failed {}", .{err});
                 continue;
             };
@@ -128,7 +119,7 @@ fn _master() !void {
         if (task.notifyWait(socket_notification_index, clear_none, clear_all, &val, rtos.msToTicks(500))) {
             const socket: lwip.Socket = .{ .fd = @intCast(val) };
             defer socket.close() catch {};
-            sendState(socket, &readings, &buf) catch |err| {
+            sendState(socket, &readings, &net_buf) catch |err| {
                 log.err("send state failed {s}", .{@errorName(err)});
             };
         }
@@ -154,19 +145,13 @@ fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
                 _ = w.consume(n);
             }
         }
-        try w.writeInt(u32, r.ts, .little);
-        try w.writeInt(u16, r.temp, .little);
+        try r.encode(&w);
     }
     while (w.end > 0) {
         const n = try socket.send(w.buffered(), 0);
         _ = w.consume(n);
     }
 }
-
-const Reading = packed struct {
-    ts: u32,
-    temp: u16,
-};
 
 fn sendUpdate(readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
@@ -196,14 +181,10 @@ fn sendUpdate(readings: *Readings, buf: []u8) !void {
             continue;
         }
         added += 1;
-        try w.writeInt(u32, r.ts, .little);
-        try w.writeInt(u16, r.temp, .little);
+        try r.encode(&w);
     }
-    // log.debug(
-    //     "readings count: {} count: {} skip: {} added: {}",
-    //     .{ readings.count(), count, skip, added },
-    // );
-    _ = try update_socket.sendTo(w.buffered(), 0, @ptrCast(&update_addr), @sizeOf(lwip.SockAddrIn));
+
+    _ = try bcast.socket.sendTo(w.buffered(), 0, @ptrCast(&bcast.addr), @sizeOf(lwip.SockAddrIn));
 }
 
 pub fn deviceID() u32 {
@@ -228,6 +209,7 @@ fn acceptWorker(ptr: ?*anyopaque) callconv(.c) void {
         log.err("accept task failed {s}", .{@errorName(err)});
     };
 }
+
 fn accept(hnd: task.Handle) !void {
     var addr: lwip.SockAddrIn = undefined;
     addr.sin_family = sys.AF_INET;

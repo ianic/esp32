@@ -9,6 +9,10 @@ pub fn build(b: *std.Build) !void {
 
     const project = b.option([]const u8, "project", "Project to use in cmake") orelse "blink";
 
+    const msg_mod = b.addModule("msg", .{
+        .root_source_file = b.path("src/message.zig"),
+    });
+
     const examples = [_][]const u8{
         "blink",
         "wifi",
@@ -25,6 +29,7 @@ pub fn build(b: *std.Build) !void {
             }),
         });
         obj.root_module.addImport("idf", idf_wrapped_modules(b));
+        obj.root_module.addImport("msg", msg_mod);
         const obj_install = b.addInstallArtifact(obj, .{
             .dest_dir = .{
                 .override = .{
@@ -263,8 +268,8 @@ fn buildHost(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
 
     const binaries = [_][]const u8{
         "sink",
-        "state",
-        "server",
+        //"state",
+        //"server",
     };
     inline for (binaries) |name| {
         const exe = b.addExecutable(.{
