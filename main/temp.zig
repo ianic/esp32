@@ -11,7 +11,7 @@ var wifi: @import("WiFi.zig") = .{};
 const TempSensor = @import("temp_sensor.zig").TempSensor;
 const Readings = msg.RingBuffer(msg.Temp);
 
-var device_id: u32 = 0;
+var device_id: u48 = 0;
 var session_id: u32 = 0;
 var bcast: struct {
     addr: lwip.SockAddrIn,
@@ -129,12 +129,13 @@ fn _master() !void {
 fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
 
-    try w.writeByte(0); // message type = temp
-    try w.writeByte(1); // update or state
-
-    // identification
-    try w.writeInt(u32, device_id, .little);
-    try w.writeInt(u32, session_id, .little);
+    const header: msg.Header = .{
+        .device_id = device_id,
+        .message_type = .temperature_reading,
+        .session_id = session_id,
+        .flags = .{ .state = true },
+    };
+    try header.encode(&w);
 
     try w.writeInt(u16, @intCast(readings.count()), .little);
     var iter = readings.iterator();
@@ -156,12 +157,12 @@ fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
 fn sendUpdate(readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
 
-    try w.writeByte(0); // message type = temp
-    try w.writeByte(0); // update or state
-
-    // identification
-    try w.writeInt(u32, device_id, .little);
-    try w.writeInt(u32, session_id, .little);
+    const header: msg.Header = .{
+        .device_id = device_id,
+        .message_type = .temperature_reading,
+        .session_id = session_id,
+    };
+    try header.encode(&w);
 
     // number of readings which fit into buf
     const count: u16 = @min(
@@ -169,9 +170,8 @@ fn sendUpdate(readings: *Readings, buf: []u8) !void {
         readings.count(),
         std.math.maxInt(u16),
     );
-
-    //
     try w.writeInt(u16, count, .little);
+
     var iter = readings.iterator();
     var skip: usize = readings.count() - count;
     var added: usize = 0;
@@ -187,12 +187,10 @@ fn sendUpdate(readings: *Readings, buf: []u8) !void {
     _ = try bcast.socket.sendTo(w.buffered(), 0, @ptrCast(&bcast.addr), @sizeOf(lwip.SockAddrIn));
 }
 
-pub fn deviceID() u32 {
+pub fn deviceID() u48 {
     var mac: [6]u8 = undefined;
     _ = sys.esp_efuse_mac_get_default(&mac);
-
-    // Hash all 6 unique bytes using the Zig standard library CRC32 algorithm
-    return std.hash.Crc32.hash(&mac);
+    return std.mem.readInt(u48, &mac, .big);
 }
 
 fn timestamp() u32 {

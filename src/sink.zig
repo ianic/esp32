@@ -96,6 +96,12 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
 }
 
 fn udpSink(io: Io, root_dir: Io.Dir) !void {
+    udpSink_(io, root_dir) catch |err| {
+        log.err("udpSink {}", .{err});
+    };
+}
+
+fn udpSink_(io: Io, root_dir: Io.Dir) !void {
     const listen_addr = try std.Io.net.IpAddress.parse("0.0.0.0", 4242);
     const socket = try listen_addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer socket.close(io);
@@ -170,8 +176,8 @@ fn udpSink(io: Io, root_dir: Io.Dir) !void {
 }
 
 fn open(io: Io, root_dir: Io.Dir, header: msg.Header) !Io.File {
-    var buf: [20]u8 = undefined;
-    const dir_name = try std.fmt.bufPrint(&buf, "{:0>10}", .{header.device_id});
+    var buf: [15 + 10]u8 = undefined;
+    const dir_name = try std.fmt.bufPrint(&buf, "{x:0>12}-{x}", .{ header.device_id, header.message_type });
     const file_name = try std.fmt.bufPrint(buf[dir_name.len..], "{:0>10}", .{header.session_id});
 
     const dir = try root_dir.createDirPathOpen(io, dir_name, .{});

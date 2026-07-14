@@ -74,29 +74,72 @@ pub const Temp = struct {
     }
 };
 
+pub const Type = enum(u8) {
+    temperature_reading = 0xaa,
+};
+
 pub const Header = struct {
-    message_type: u8,
-    update_type: u8,
-    device_id: u32,
+    const Flags = packed struct {
+        state: bool = false,
+        _: u7 = 0,
+    };
+
+    device_id: u48,
+    message_type: Type,
+    flags: Flags = .{},
     session_id: u32,
 
     pub fn parse(rdr: *Io.Reader) !Header {
-        const message_type = try rdr.takeByte();
-        const update_type = try rdr.takeByte();
-        const device_id = try rdr.takeInt(u32, .little);
+        const device_id = try rdr.takeInt(u48, .little);
+        const message_type = std.enums.fromInt(Type, try rdr.takeByte()) orelse return error.InvalidMessageType;
+        const flags: Flags = @bitCast(try rdr.takeByte());
         const session_id = try rdr.takeInt(u32, .little);
 
         return .{
-            .message_type = message_type,
-            .update_type = update_type,
             .device_id = device_id,
+            .message_type = message_type,
+            .flags = flags,
             .session_id = session_id,
         };
+    }
+
+    pub fn encode(self: Header, w: *Io.Writer) !void {
+        try w.writeInt(u48, self.device_id, .little);
+        try w.writeByte(@intFromEnum(self.message_type));
+        try w.writeByte(@bitCast(self.flags));
+        try w.writeInt(u32, self.session_id, .little);
+    }
+
+    test {
+        const mac: [6]u8 = .{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+        const device_id: u48 = mem.readInt(u48, &mac, .big);
+
+        const h: Header = .{
+            .device_id = device_id,
+            .message_type = .temperature_reading,
+            .session_id = 0x77889900,
+            .flags = .{ .state = true },
+        };
+
+        var buf: [12]u8 = undefined;
+        var w = Io.Writer.fixed(&buf);
+        try h.encode(&w);
+
+        var r = Io.Reader.fixed(&buf);
+        const h2 = try Header.parse(&r);
+        try testing.expectEqualDeep(h, h2);
+
+        // change message type byte
+        buf[6] = 0xff;
+        //std.debug.print("{x}", .{buf});
+        r = Io.Reader.fixed(&buf);
+        try testing.expectError(error.InvalidMessageType, Header.parse(&r));
     }
 };
 
 test {
     _ = Temp;
+    _ = Header;
 }
 
 pub fn iterate(
