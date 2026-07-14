@@ -4,26 +4,26 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const project = b.option([]const u8, "project", "Project to use in cmake") orelse "blink";
 
-    try buildEsp32(b, optimize, project);
+    buildEsp32(b, optimize, project);
     buildHost(b, optimize);
 }
 
-fn buildEsp32(b: *std.Build, optimize: std.builtin.OptimizeMode, project: []const u8) !void {
+fn buildEsp32(b: *std.Build, optimize: std.builtin.OptimizeMode, project: []const u8) void {
     const target = b.standardTargetOptions(.{
-        .whitelist = espressif_targets,
-        .default_target = espressif_targets[0],
+        .whitelist = riscv_targets,
+        .default_target = riscv_targets[0],
     });
     const msg_mod = b.addModule("msg", .{
         .root_source_file = b.path("src/message.zig"),
     });
-
     const wrapped_modules = idfWrappedModules(b);
-    const examples = [_][]const u8{
+
+    const projects = [_][]const u8{
         "blink",
         "wifi",
         "temp",
     };
-    inline for (examples) |name| {
+    inline for (projects) |name| {
         const obj = b.addObject(.{
             .name = name,
             .root_module = b.createModule(.{
@@ -170,94 +170,31 @@ fn idfWrappedModules(b: *std.Build) *std.Build.Module {
     });
 }
 
-const espressif_targets: []const std.Target.Query = riscv_targets ++ xtensa_targets;
-
-const riscv_targets: []const std.Target.Query = blk: {
-    var result: []const std.Target.Query = &.{};
-
-    // Named ESP32 RISC-V CPU models — available when built with the Espressif Zig fork.
-    //   MC   group (c2, c3):               m+c+zicsr+zifencei          abi=none
-    //   MAC  group (c5, c6, c61, h2, h21): m+a+c+zicsr+zifencei        abi=none
-    //   MACF group (h4, s31, p4, p4eco4):  m+a+c+f+zicsr+zifencei      abi=eabihf
-    const plain_models = .{
-        "esp32c2",  "esp32c3",
-        "esp32c5",  "esp32c6",
-        "esp32c61", "esp32c61eco0",
-        "esp32h2",  "esp32h21",
-    };
-    for (plain_models) |name| {
-        if (@hasDecl(std.Target.riscv.cpu, name)) {
-            result = result ++ &[_]std.Target.Query{.{
-                .cpu_arch = .riscv32,
-                .cpu_model = .{ .explicit = &@field(std.Target.riscv.cpu, name) },
-                .os_tag = .freestanding,
-                .abi = .none,
-            }};
-        }
-    }
-
-    // MACF group: has FPU — use eabihf ABI.
-    const macf_models = .{
-        "esp32h4",     "esp32p4",
-        "esp32p4eco4", "esp32s31",
-    };
-    for (macf_models) |name| {
-        if (@hasDecl(std.Target.riscv.cpu, name)) {
-            result = result ++ &[_]std.Target.Query{.{
-                .cpu_arch = .riscv32,
-                .cpu_model = .{ .explicit = &@field(std.Target.riscv.cpu, name) },
-                .os_tag = .freestanding,
-                .abi = .eabihf,
-            }};
-        }
-    }
-
-    // Generic fallback targets for standard Zig builds without named ESP models.
-    if (result.len == 0) {
-        result = &[_]std.Target.Query{
-            // MC: c2, c3
-            .{
-                .cpu_arch = .riscv32,
-                .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
-                .os_tag = .freestanding,
-                .abi = .none,
-                .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .c, .zifencei, .zicsr }),
-            },
-            // MAC: c5, c6, c61, h2, h21
-            .{
-                .cpu_arch = .riscv32,
-                .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
-                .os_tag = .freestanding,
-                .abi = .none,
-                .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .c, .zifencei, .zicsr }),
-            },
-            // MACF: h4, s31, p4, p4eco4
-            .{
-                .cpu_arch = .riscv32,
-                .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
-                .os_tag = .freestanding,
-                .abi = .eabihf,
-                .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .c, .f, .zifencei, .zicsr }),
-            },
-        };
-    }
-
-    break :blk result;
-};
-
-const xtensa_targets: []const std.Target.Query = blk: {
-    var result: []const std.Target.Query = &.{};
-    for (.{ "esp32", "esp32s2", "esp32s3" }) |name| {
-        if (@hasDecl(std.Target.xtensa.cpu, name)) {
-            result = result ++ &[_]std.Target.Query{.{
-                .cpu_arch = .xtensa,
-                .cpu_model = .{ .explicit = &@field(std.Target.xtensa.cpu, name) },
-                .os_tag = .freestanding,
-                .abi = .none,
-            }};
-        }
-    }
-    break :blk result;
+const riscv_targets: []const std.Target.Query = &[_]std.Target.Query{
+    // MC: c2, c3
+    .{
+        .cpu_arch = .riscv32,
+        .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+        .os_tag = .freestanding,
+        .abi = .none,
+        .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .c, .zifencei, .zicsr }),
+    },
+    // MAC: c5, c6, c61, h2, h21
+    .{
+        .cpu_arch = .riscv32,
+        .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+        .os_tag = .freestanding,
+        .abi = .none,
+        .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .c, .zifencei, .zicsr }),
+    },
+    // MACF: h4, s31, p4, p4eco4
+    .{
+        .cpu_arch = .riscv32,
+        .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+        .os_tag = .freestanding,
+        .abi = .eabihf,
+        .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .c, .f, .zifencei, .zicsr }),
+    },
 };
 
 fn buildHost(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
