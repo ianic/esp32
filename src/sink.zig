@@ -14,9 +14,19 @@ pub fn main(init: std.process.Init) !void {
     const root_dir = try std.Io.Dir.openDirAbsolute(io, "/home/ianic/data", .{ .iterate = true });
     defer root_dir.close(io);
 
-    var server_future = io.async(httpServer, .{ io, gpa, root_dir });
-    _ = io.async(udpSink, .{ io, root_dir });
-    try server_future.await(io);
+    const Result = union(enum) {
+        a: anyerror!void,
+        b: anyerror!void,
+    };
+    var results: [2]Result = undefined;
+    var select = Io.Select(Result).init(io, &results);
+    defer _ = select.cancel();
+    try select.concurrent(.a, httpServer, .{ io, gpa, root_dir });
+    try select.concurrent(.b, udpSink, .{ io, root_dir });
+    switch (try select.await()) {
+        .a => |ret| ret catch |err| log.err("http server exit with {}", .{err}),
+        .b => |ret| ret catch |err| log.err("udp sink exit with {}", .{err}),
+    }
 }
 
 fn httpServer(io: Io, gpa: mem.Allocator, root_dir: Io.Dir) !void {
@@ -77,7 +87,13 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
         count: usize = 0,
         fn handle(ptr: *anyopaque, rec: msg.Temp) anyerror!void {
             const self: *@This() = @ptrCast(@alignCast(ptr));
-            if (rec.celsius() < 0) return;
+            if (rec.celsius() < 0 and rec.ts < 1784040543) {
+                return;
+            }
+            if (rec.isEmpty()) {
+                log.warn("empty record at position {}", .{self.count});
+                return;
+            }
             try self.w.print("{},{}\n", .{ rec.ts, rec.celsius() });
             self.count += 1;
         }
@@ -96,12 +112,6 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
 }
 
 fn udpSink(io: Io, root_dir: Io.Dir) !void {
-    udpSink_(io, root_dir) catch |err| {
-        log.err("udpSink {}", .{err});
-    };
-}
-
-fn udpSink_(io: Io, root_dir: Io.Dir) !void {
     const listen_addr = try std.Io.net.IpAddress.parse("0.0.0.0", 4242);
     const socket = try listen_addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer socket.close(io);

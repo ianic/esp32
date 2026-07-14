@@ -12,7 +12,7 @@ pub const Temp = struct {
     temp: u16,
 
     pub const bytes = 6;
-    pub const empty: Temp = .{ .ts = 0, .temp = 0 };
+    pub const empty: Temp = .{ .ts = 0, .temp = std.math.maxInt(u16) };
     const sign_mask: u16 = 0xf800;
 
     pub fn parse(r: *Io.Reader) !Temp {
@@ -38,6 +38,10 @@ pub const Temp = struct {
 
     pub fn equal(a: Temp, b: Temp) bool {
         return @abs(a.value() - b.value()) <= 1;
+    }
+
+    pub fn isEmpty(self: Temp) bool {
+        return self.ts == 0;
     }
 
     test "negative" {
