@@ -19,6 +19,7 @@ fn buildEsp32(b: *std.Build, optimize: std.builtin.OptimizeMode, project: []cons
     const wrapped_modules = idfWrappedModules(b);
 
     const projects = [_][]const u8{
+        "app",
         "blink",
         "wifi",
         "temp",

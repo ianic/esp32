@@ -87,7 +87,7 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
         count: usize = 0,
         fn handle(ptr: *anyopaque, rec: msg.Temp) anyerror!void {
             const self: *@This() = @ptrCast(@alignCast(ptr));
-            if (rec.celsius() < 0 and rec.ts < 1784040543) {
+            if (rec.celsius() < 0 and rec.ts < 1784166457) {
                 return;
             }
             if (rec.isEmpty()) {

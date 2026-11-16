@@ -18,6 +18,9 @@ var bcast: struct {
     socket: lwip.Socket,
 } = undefined;
 
+const led_pin: idf.gpio.Num() = .@"21";
+const relay_pin: idf.gpio.Num() = .@"9";
+
 fn main() !void {
     try idf.nvs.flashInitOrErase();
     try wifi.initNvs();
@@ -29,6 +32,9 @@ fn main() !void {
         bcast.addr.sin_addr.s_addr = idf.sys.ipaddr_addr("224.0.0.1");
     }
     device_id = deviceID();
+
+    try idf.gpio.Direction.set(led_pin, .output);
+    try idf.gpio.Direction.set(relay_pin, .output);
 
     const master_task = try task.create(master, "master", 4 * 1024, null, 2);
     // priority 19 above lwip
@@ -93,12 +99,16 @@ fn _master() !void {
 
     var net_buf: [1460]u8 = undefined;
 
+    var led_on: u1 = 0;
     while (true) {
         var val: u32 = 0;
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
             const reading: msg.Temp = .{ .ts = timestamp(), .temp = @intCast(val) };
             if (session_id == 0) {
                 session_id = reading.ts;
+            }
+            if (readings.last()) |l| {
+                if (@abs(l.celsius() - reading.celsius()) > 10) continue;
             }
             readings.append(reading);
             sendUpdate(&readings, &net_buf) catch |err| {
@@ -114,6 +124,9 @@ fn _master() !void {
                 readings.count(),
                 readings.sequenceRange(),
             });
+            led_on ^= 1;
+            idf.gpio.Level.set(led_pin, led_on) catch {};
+            //idf.gpio.Level.set(relay_pin, led_on) catch {};
         }
 
         if (task.notifyWait(socket_notification_index, clear_none, clear_all, &val, rtos.msToTicks(500))) {

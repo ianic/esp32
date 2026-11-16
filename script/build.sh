@@ -6,6 +6,8 @@ cd $(git rev-parse --show-toplevel)
 # Initialize a default value for the variable
 rebuild=false
 project=blink
+#port=/dev/ttyUSB0
+port=/dev/ttyACM0
 
 if [ ! -d "build" ]; then
     rebuild=true
@@ -32,12 +34,13 @@ echo Building: $project
 . esp-idf/export.sh
 
 if [ "$rebuild" = true ]; then
-    # rm -rf build
-    # idf.py set-target esp32c3
+    rm -rf build
+    idf.py set-target esp32c3
+    
     idf.py build -DZIG_PROJECT=$project
-    idf.py -p /dev/ttyUSB0 flash monitor
+    idf.py -p $port flash monitor
     exit 0
 fi
 
 idf.py app -DZIG_PROJECT=$project
-idf.py -p /dev/ttyUSB0 app-flash monitor
+idf.py -p $port app-flash monitor

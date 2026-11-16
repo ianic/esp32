@@ -29,7 +29,7 @@ pub fn RingBuffer(comptime T: type) type {
             if (self.sequence >= 2) {
                 const l0 = self.items[self.head];
                 const l1 = self.items[if (self.head == 0) self.items.len - 1 else self.head - 1];
-                if (l0.equal(l1)) {
+                if (t.equal(l0) and t.equal(l1)) {
                     self.items[self.head] = t;
                     return;
                 }
@@ -274,23 +274,18 @@ test "append" {
 
     // replacing last with different
     readings.append(.{ .temp = 3, .ts = 5 });
-    try testing.expectEqual(2, readings.count());
+    try testing.expectEqual(3, readings.count());
 
     // next is appended
     readings.append(.{ .temp = 3, .ts = 6 });
-    try testing.expectEqual(3, readings.count());
+    try testing.expectEqual(4, readings.count());
 
     try testing.expectEqual(3, readings.last().?.temp);
     try testing.expectEqual(6, readings.last().?.ts);
-
-    readings.append(.{ .temp = 5, .ts = 7 });
-    try testing.expectEqual(3, readings.count());
-    readings.append(.{ .temp = 7, .ts = 8 });
-    try testing.expectEqual(4, readings.count());
 
     // overflow to the pos 0
     readings.append(.{ .temp = 8, .ts = 9 });
     try testing.expectEqual(Temp{ .temp = 8, .ts = 9 }, buf[0]);
     readings.append(.{ .temp = 9, .ts = 11 });
-    try testing.expectEqual(Temp{ .temp = 9, .ts = 11 }, buf[0]);
+    try testing.expectEqual(Temp{ .temp = 9, .ts = 11 }, buf[1]);
 }

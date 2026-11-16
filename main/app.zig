@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const idf = @import("esp_idf");
+const idf = @import("idf");
 const ver = idf.ver.Version;
 const mem = std.mem;
 
@@ -58,11 +58,11 @@ fn main() callconv(.c) void {
 }
 
 pub const panic = idf.esp_panic.panic;
-const log = std.log.scoped(idf.log.default_log_scope);
+const log = std.log.scoped(.main);
 pub const std_options: std.Options = .{
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
         else => .info,
     },
-    .logFn = idf.log.espLogFn,
+    .logFn = @import("log.zig").logFn,
 };
