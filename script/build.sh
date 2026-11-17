@@ -3,6 +3,7 @@
 set -e
 cd $(git rev-parse --show-toplevel)
 
+
 # Initialize a default value for the variable
 rebuild=false
 project=blink
@@ -31,10 +32,12 @@ shift $((OPTIND - 1))
 
 echo Building: $project
 
+unset IDF_PYTHON_ENV_PATH
 . esp-idf/export.sh
 
 if [ "$rebuild" = true ]; then
     rm -rf build
+    idf.py fullclean
     idf.py set-target esp32c3
     
     idf.py build -DZIG_PROJECT=$project

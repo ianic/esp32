@@ -12,3 +12,23 @@ rsync -av zig-esp-idf-sample/cmake/ cmake/
 rsync -av zig-esp-idf-sample/include/ include/
 rsync -av zig-esp-idf-sample/imports/ imports/
 rsync -av zig-esp-idf-sample/patches/ patches/
+
+exit 0
+
+# to update esp-idf
+
+git clone --recursive https://github.com/espressif/esp-idf.git
+
+# to checkout some tag
+git checkout v6.1.1
+
+cd ~/Code/esp32/esp-idf
+git pull
+git checkout release/v6.1
+git submodule sync --recursive
+git submodule update --init --recursive
+
+unset IDF_PYTHON_ENV_PATH
+./install.sh esp32c3
+. ./export.sh
+

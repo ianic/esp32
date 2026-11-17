@@ -16,6 +16,10 @@ fn main() callconv(.c) void {
     // idf.heap.MultiHeapAllocator
     // idf.heap.VPortAllocator
 
+    var hwm = idf.rtos.Task.getStackHighWaterMark(null);
+    log.info("main stack high water mark: {}", .{hwm});
+    log.debug("main stack high water mark: {}", .{hwm});
+
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"8bit" = true });
     var arena = std.heap.ArenaAllocator.init(heap.allocator());
     defer arena.deinit();
@@ -47,13 +51,16 @@ fn main() callconv(.c) void {
         heap.freeSize(),
         heap.minimumFreeSize(),
     });
+    hwm = idf.rtos.Task.getStackHighWaterMark(null);
+    log.info("main stack high water mark {}", .{hwm});
+    log.debug("main stack high water mark {}", .{hwm});
 
     log.info("Let's have a look at your shiny {s} - {s} system! :)", .{
         @tagName(builtin.cpu.arch),
         builtin.cpu.model.name,
     });
 
-    if (builtin.mode == .Debug)
+    if (builtin.mode == .debug)
         heap.dump();
 }
 
@@ -61,7 +68,7 @@ pub const panic = idf.esp_panic.panic;
 const log = std.log.scoped(.main);
 pub const std_options: std.Options = .{
     .log_level = switch (builtin.mode) {
-        .Debug => .debug,
+        .debug => .debug,
         else => .info,
     },
     .logFn = @import("log.zig").logFn,

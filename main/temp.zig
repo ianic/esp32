@@ -243,7 +243,7 @@ fn accept(hnd: task.Handle) !void {
 pub const panic = idf.esp_panic.panic;
 pub const std_options: std.Options = .{
     .log_level = switch (@import("builtin").mode) {
-        .Debug => .debug,
+        .debug => .debug,
         else => .info,
     },
     .logFn = @import("log.zig").logFn,
