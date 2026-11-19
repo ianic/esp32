@@ -35,15 +35,22 @@ echo Building: $project
 unset IDF_PYTHON_ENV_PATH
 . esp-idf/export.sh
 
+
 if [ "$rebuild" = true ]; then
     rm -rf build
     idf.py fullclean
+    rm sdkconfig
     idf.py set-target esp32c3
     
-    idf.py build -DZIG_PROJECT=$project
+    idf.py build -DZIG_PROJECT=$project #-DZIG_BUILD_TYPE=ReleaseSmall
+    idf.py size
+    idf.py size-components
     idf.py -p $port flash monitor
     exit 0
 fi
 
-idf.py app -DZIG_PROJECT=$project
+idf.py app -DZIG_PROJECT=$project -DZIG_BUILD_TYPE=Debug
+idf.py size
+idf.py size-components
 idf.py -p $port app-flash monitor
+# idf.py -p $port monitor

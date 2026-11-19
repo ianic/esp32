@@ -41,6 +41,7 @@ fn main() !void {
     _ = try task.create(readTempWorker, "read temp", 4 * 1024, master_task, 19);
     _ = try task.create(acceptWorker, "socket accept", 4 * 1024, master_task, 2);
 
+    try startHttpServer();
     //log.debug("heap free size 2: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
 }
 
@@ -248,3 +249,90 @@ pub const std_options: std.Options = .{
     },
     .logFn = @import("log.zig").logFn,
 };
+
+fn startHttpServer() !void {
+    var config = sys.zig_httpd_default_config();
+
+    const server = try idf.http.Server.start(&config);
+
+    const root_uri = sys.httpd_uri_t{
+        .uri = "/",
+        .method = sys.HTTP_GET,
+        .handler = &handleRoot,
+        .user_ctx = null,
+    };
+    try idf.http.Server.registerUri(server, &root_uri);
+
+    const api_uri = sys.httpd_uri_t{
+        .uri = "/update",
+        .method = sys.HTTP_GET,
+        .handler = &handleUpdateC,
+        .user_ctx = null,
+    };
+    try idf.http.Server.registerUri(server, &api_uri);
+
+    log.info("HTTP server started on port 80", .{});
+}
+
+const index_html =
+    \\<!DOCTYPE html><html><body>
+    \\<h1>Hello from Zig on ESP32!</h1>
+    \\<p>This page is served by the Zig HTTP server wrapper.</p>
+    \\</body></html>
+;
+
+export fn handleRoot(req: [*c]sys.httpd_req_t) callconv(.c) sys.esp_err_t {
+    idf.http.Server.Response.sendStr(req, index_html) catch |err| {
+        log.err("sendStr: {s}", .{@errorName(err)});
+        return sys.ESP_FAIL;
+    };
+    return sys.ESP_OK;
+}
+
+export fn handleUpdateC(req: [*c]sys.httpd_req_t) callconv(.c) sys.esp_err_t {
+    handleUpdate(req) catch |err| {
+        log.err("handleUpdate: {s}", .{@errorName(err)});
+        return sys.ESP_FAIL;
+    };
+    return sys.ESP_OK;
+}
+
+fn handleUpdate(req: [*c]sys.httpd_req_t) !void {
+    const len = idf.http.Server.Request.getUrlQueryLen(req);
+    if (len > 0) {
+        var buf: [128]u8 = undefined;
+        try idf.http.Server.Request.getUrlQueryStr(req, @ptrCast(&buf), len + 1); // zero terminated
+        const query_str = buf[0..len]; // zig string
+        if (getKey(query_str, "url")) |val| {
+            @memmove(buf[0..val.len], val);
+            buf[val.len] = 0;
+            const url = buf[0..val.len]; // Zig string, buf is zero terminated
+
+            log.debug("update url: '{s}'", .{url});
+            try otaUpdate(@ptrCast(url.ptr));
+            try idf.http.Server.Response.sendStr(req, @ptrCast(&buf));
+        }
+    }
+}
+
+fn getKey(query_str: []const u8, key: []const u8) ?[]const u8 {
+    var iter = std.mem.splitScalar(u8, query_str, '&');
+    while (iter.next()) |pair| {
+        if (std.mem.indexOfScalar(u8, pair, '=')) |eq_pos| {
+            if (std.mem.eql(u8, pair[0..eq_pos], key)) {
+                return pair[eq_pos + 1 ..];
+            }
+        }
+    }
+    return null;
+}
+
+fn otaUpdate(url: [*c]const u8) !void {
+    const config: sys.esp_http_client_config_t = .{
+        .url = url,
+    };
+    const ota_config: sys.esp_https_ota_config_t = .{
+        .http_config = &config,
+    };
+    try idf.err.espCheckError(sys.esp_https_ota(@ptrCast(&ota_config)));
+}
