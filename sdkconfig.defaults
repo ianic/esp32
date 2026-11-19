@@ -3,7 +3,8 @@ CONFIG_PARTITION_TABLE_TWO_OTA_LARGE=y
 
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-CONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=2
+# I'm using 3 slots in temp.zig
+CONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=4
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 
 # static RX buffers use approximately 1.6 KB each, allocated during esp_wifi_init
@@ -23,6 +24,10 @@ CONFIG_SPI_FLASH_AUTO_SUSPEND=n
 # reboots (such as power loss or crash), the bootloader will
 # automatically roll back to the previous working firmware.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
+CONFIG_ESP_HTTPS_SERVER_ENABLE=n
+CONFIG_MBEDTLS_TLS_ENABLED=n # ovo ne radi jer nekom drugom treba
 
 # optimizations
 CONFIG_LWIP_IPV6=n

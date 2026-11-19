@@ -2,6 +2,7 @@ const std = @import("std");
 const idf = @import("idf");
 const gpio = idf.gpio;
 const Pin = gpio.Num();
+const testing = std.testing;
 
 const OneWire = struct {
     pin: Pin,
@@ -121,7 +122,7 @@ pub const TempSensor = struct {
         // temperature bytes
         const lsb = res[0];
         const msb = res[1];
-        const temp: u16 = (@as(u16, @intCast(msb)) << 8 | lsb);
+        const temp: u16 = ((@as(u16, @intCast(msb)) << 8) | lsb);
         return .{ temp, @as(f32, @floatFromInt(temp)) / 16 };
     }
 
@@ -147,4 +148,55 @@ pub const TempSensor = struct {
 
 test {
     _ = TempSensor;
+    _ = SensorHealth;
 }
+
+pub const SensorHealth = struct {
+    measurements: u32 = 0,
+    successes: u32 = 0,
+    failures: u32 = 0,
+    recent: u32 = 0,
+
+    pub fn success(self: *SensorHealth) void {
+        self.measurements += 1;
+        self.successes += 1;
+        self.recent = (self.recent << 1) | 1;
+    }
+
+    pub fn fail(self: *SensorHealth) void {
+        self.measurements += 1;
+        self.failures += 1;
+        self.recent = (self.recent << 1);
+    }
+
+    pub fn healthy(self: *SensorHealth) bool {
+        if (self.measurements < 32) {
+            if (self.successes > self.failures and self.successes - self.failures < 2) return true;
+            return false;
+        }
+        return @popCount(self.recent) >= 30;
+    }
+
+    test {
+        var sh: SensorHealth = .{};
+        sh.success();
+        try std.testing.expect(sh.healthy());
+        sh.fail();
+        try std.testing.expect(!sh.healthy());
+        for (0..30) |_| {
+            sh.success();
+        }
+        try std.testing.expect(sh.healthy());
+        try testing.expectEqual(31, @popCount(sh.recent));
+
+        sh.fail();
+        try std.testing.expect(sh.healthy());
+        try testing.expectEqual(30, @popCount(sh.recent));
+        sh.fail();
+        try std.testing.expect(sh.healthy());
+        try testing.expectEqual(30, @popCount(sh.recent));
+        sh.fail();
+        try std.testing.expect(!sh.healthy());
+        try testing.expectEqual(29, @popCount(sh.recent));
+    }
+};

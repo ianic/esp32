@@ -9,6 +9,7 @@ const msg = @import("msg");
 
 var wifi: @import("WiFi.zig") = .{};
 const TempSensor = @import("temp_sensor.zig").TempSensor;
+const SensorHealth = @import("temp_sensor.zig").SensorHealth;
 const Readings = msg.RingBuffer(msg.Temp);
 
 var device_id: u48 = 0;
@@ -36,13 +37,22 @@ fn main() !void {
     try idf.gpio.Direction.set(led_pin, .output);
     try idf.gpio.Direction.set(relay_pin, .output);
 
-    const master_task = try task.create(master, "master", 4 * 1024, null, 2);
+    const master_task = try task.create(masterC, "master", 4 * 1024, null, 2);
     // priority 19 above lwip
     _ = try task.create(readTempWorker, "read temp", 4 * 1024, master_task, 19);
     _ = try task.create(acceptWorker, "socket accept", 4 * 1024, master_task, 2);
 
-    try startHttpServer();
-    //log.debug("heap free size 2: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
+    try startHttpServer(master_task);
+
+    try idf.err.espCheckError(sys.esp_ota_mark_app_valid_cancel_rollback());
+
+    const partition = sys.esp_ota_get_running_partition();
+    log.info(
+        "Running partition: {s}, address: {x}, size: {x}",
+        .{ std.mem.span(@as([*c]const u8, &partition.*.label)), partition.*.address, partition.*.size },
+    );
+
+    // log.debug("heap free size 2: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
 }
 
 export fn app_main() callconv(.c) void {
@@ -54,12 +64,26 @@ export fn app_main() callconv(.c) void {
 fn readTempWorker(ptr: ?*anyopaque) callconv(.c) void {
     const hnd: task.Handle = @ptrCast(@alignCast(ptr.?));
     const ts: TempSensor = .init(temp_sensor_pin);
+    var sh: SensorHealth = .{};
     while (true) {
         readTemp(ts, hnd) catch |err| {
-            log.err("read temp worker task failed {s}", .{@errorName(err)});
-            if (err == error.CrcFail) continue;
-            task.delayMs(1000);
+            sh.fail();
+            if (!sh.healthy()) {
+                log.err(
+                    "temp sensor measurements: {d}, successes: {d}, failures: {d}, recents: {b} error: {s}",
+                    .{ sh.measurements, sh.successes, sh.failures, sh.recent, @errorName(err) },
+                );
+            }
+            if (err != error.CrcFail)
+                task.delayMs(1000);
+            continue;
         };
+        sh.success();
+        if (sh.measurements % 32 == 0) {
+            log.info("temp sensor measurements: {d}, successes: {d}, failures: {d}, recents: {b}", .{
+                sh.measurements, sh.successes, sh.failures, sh.recent,
+            });
+        }
     }
 }
 
@@ -73,16 +97,17 @@ fn readTemp(ts: TempSensor, hnd: task.Handle) !void {
 const temp_sensor_pin: idf.gpio.Num() = .@"10";
 const temp_notification_index = 0;
 const socket_notification_index = 1;
+const ota_notification_index = 2;
 const clear_none = 0;
 const clear_all = 0xff_ff_ff_ff;
 
-fn master(_: ?*anyopaque) callconv(.c) void {
-    _master() catch |err| {
+fn masterC(_: ?*anyopaque) callconv(.c) void {
+    master() catch |err| {
         log.err("master task {}", .{err});
     };
 }
 
-fn _master() !void {
+fn master() !void {
     // allocate readings in the largest heap free block
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"32bit" = true });
     const gpa = heap.allocator();
@@ -103,6 +128,13 @@ fn _master() !void {
     var led_on: u1 = 0;
     while (true) {
         var val: u32 = 0;
+
+        if (task.notifyWait(ota_notification_index, clear_none, clear_all, &val, 0)) {
+            log.info("ota notification restarting", .{});
+            sys.esp_restart();
+            return;
+        }
+
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
             const reading: msg.Temp = .{ .ts = timestamp(), .temp = @intCast(val) };
             if (session_id == 0) {
@@ -250,8 +282,9 @@ pub const std_options: std.Options = .{
     .logFn = @import("log.zig").logFn,
 };
 
-fn startHttpServer() !void {
+fn startHttpServer(hnd: task.Handle) !void {
     var config = sys.zig_httpd_default_config();
+    config.global_user_ctx = hnd;
 
     const server = try idf.http.Server.start(&config);
 
@@ -271,7 +304,7 @@ fn startHttpServer() !void {
     };
     try idf.http.Server.registerUri(server, &api_uri);
 
-    log.info("HTTP server started on port 80", .{});
+    // log.info("HTTP server started on port 80", .{});
 }
 
 const index_html =
@@ -299,6 +332,8 @@ export fn handleUpdateC(req: [*c]sys.httpd_req_t) callconv(.c) sys.esp_err_t {
 
 fn handleUpdate(req: [*c]sys.httpd_req_t) !void {
     const len = idf.http.Server.Request.getUrlQueryLen(req);
+    const ctx = sys.httpd_get_global_user_ctx(req.*.handle);
+    const hnd: task.Handle = @ptrCast(@alignCast(ctx));
     if (len > 0) {
         var buf: [128]u8 = undefined;
         try idf.http.Server.Request.getUrlQueryStr(req, @ptrCast(&buf), len + 1); // zero terminated
@@ -308,9 +343,12 @@ fn handleUpdate(req: [*c]sys.httpd_req_t) !void {
             buf[val.len] = 0;
             const url = buf[0..val.len]; // Zig string, buf is zero terminated
 
-            log.debug("update url: '{s}'", .{url});
+            log.info("ota update starting with url: '{s}'", .{url});
             try otaUpdate(@ptrCast(url.ptr));
+            log.info("ota update ok", .{});
             try idf.http.Server.Response.sendStr(req, @ptrCast(&buf));
+
+            try task.notify(hnd, 0, idf.sys.eSetValueWithOverwrite, ota_notification_index);
         }
     }
 }
