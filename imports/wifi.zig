@@ -426,7 +426,7 @@ pub fn init_config_default() sys.wifi_init_config_t {
         .dump_hesigb_enable = sys.WIFI_DUMP_HESIGB_ENABLED != 0,
         .magic = sys.WIFI_INIT_CONFIG_MAGIC,
     };
-    // fields added in idf version 6.1
+    // Fields added in idf version 6.1
     if (comptime @hasField(sys.wifi_init_config_t, "privacy_enhancements")) {
         cfg.privacy_enhancements = sys.WIFI_PRIVACY_ENHANCEMENTS_ENABLED != 0;
     }

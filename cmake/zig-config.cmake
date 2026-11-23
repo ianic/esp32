@@ -462,8 +462,6 @@ if (NOT ZIG_BUILD_TYPE)
     endif()
 endif()
 
-message(STATUS "zig build type: ${ZIG_BUILD_TYPE}")
-
 add_custom_target(zig_build
     ${ZIG_BIN} build
     --build-file ${CMAKE_SOURCE_DIR}/build.zig
