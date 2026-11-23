@@ -50,7 +50,9 @@ if [ "$rebuild" = true ]; then
     idf.py build -DZIG_PROJECT=$project -DZIG_BUILD_TYPE=ReleaseSmall
     idf.py size
     idf.py size-components
-    idf.py -p $port flash monitor
+    if [ "$no_deploy" = false ]; then
+        idf.py -p $port flash monitor
+    fi
     exit 0
 fi
 

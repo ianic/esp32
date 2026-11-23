@@ -32,3 +32,13 @@ unset IDF_PYTHON_ENV_PATH
 ./install.sh esp32c3
 . ./export.sh
 
+
+
+cp -r cmake/* zig-esp-idf-sample/cmake/ 
+cp -r include/* zig-esp-idf-sample/include/
+cp -r imports/* zig-esp-idf-sample/imports/
+cp -r patches/* zig-esp-idf-sample/patches/
+
+
+rsync -av zig-esp-idf-sample/imports/ imports/
+rsync -av zig-esp-idf-sample/patches/ patches/
