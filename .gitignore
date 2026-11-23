@@ -1,9 +1,6 @@
+/imports/idf-sys.zig
 /build/
-/cmake/
-/imports/
-/include/
 /managed_components/
-/patches/
 sdkconfig
 *.lock
 /.zig-cache/
@@ -13,3 +10,4 @@ sdkconfig
 /esp-idf/
 /zig-esp-idf-sample/
 /data/
+/tmp/
