@@ -128,24 +128,26 @@ fn udpSink(io: Io, root_dir: Io.Dir) !void {
         const header = try msg.Header.parse(rdr);
         const file = try open(io, root_dir, header);
         defer file.close(io);
-        const last_rec = try secondToLast(msg.Temp, io, file);
+        const record_len = header.message_type.size();
+        const last_ts = try secondToLast(record_len, io, file);
         var fw = file.writer(io, &write_buf);
         const w = &fw.interface;
 
         // If there is continuation, previous record is found in update packet
         var can_append = false;
         var appended_records: usize = 0;
-        var last_appended: msg.Temp = .empty;
-        if (last_rec) |lr| {
-            try fw.seekTo(try file.length(io) - msg.Temp.bytes); // always replace last record
+        var last_appended: u32 = 0;
+        if (last_ts) |lts| {
+            try fw.seekTo(try file.length(io) - record_len); // always replace last record
             const count = try rdr.takeInt(u16, .little);
             for (0..count) |_| {
-                const rec = try msg.Temp.parse(rdr);
+                const rec_bytes = try rdr.take(record_len);
+                const rec_ts = mem.readInt(u32, rec_bytes[0..4], .little);
                 if (can_append) {
-                    try rec.encode(w);
-                    last_appended = rec;
+                    try w.writeAll(rec_bytes);
+                    last_appended = rec_ts;
                     appended_records += 1;
-                } else if (rec.ts == lr.ts)
+                } else if (rec_ts == lts)
                     can_append = true;
             }
         }
@@ -164,23 +166,29 @@ fn udpSink(io: Io, root_dir: Io.Dir) !void {
 
             const count = try rdr.takeInt(u16, .little);
             for (0..count) |i| {
-                const rec = try msg.Temp.parse(rdr);
-                if (i == 0) if (last_rec) |lr| if (rec.ts > lr.ts) {
+                const rec_bytes = try rdr.take(record_len);
+                const rec_ts = mem.readInt(u32, rec_bytes[0..4], .little);
+                if (i == 0) if (last_ts) |lts| if (rec_ts > lts) {
                     // If there is gap between last and new state add empty record
                     try msg.Temp.empty.encode(w);
                 };
-                if (last_rec == null or rec.ts > last_rec.?.ts) {
-                    try rec.encode(w);
-                    last_appended = rec;
+                if (last_ts == null or rec_ts > last_ts.?) {
+                    try w.writeAll(rec_bytes);
+                    last_appended = rec_ts;
                     appended_records += 1;
                 }
             }
         }
         try fw.flush();
-
         log.debug(
-            "{d}/{d}, records: {d}, last: {}",
-            .{ header.device_id, header.session_id, appended_records, last_appended },
+            "{x}-{x}/{d}, records: {d}, last timestamp: {}",
+            .{
+                header.device_id,
+                @backingInt(header.message_type),
+                header.session_id,
+                appended_records,
+                last_appended,
+            },
         );
     }
 }
@@ -202,13 +210,15 @@ fn open(io: Io, root_dir: Io.Dir, header: msg.Header) !Io.File {
 }
 
 // read second to last record from the file
-fn secondToLast(comptime T: type, io: Io, file: Io.File) !?T {
+fn secondToLast(record_len: usize, io: Io, file: Io.File) !?u32 {
     const file_len = try file.length(io);
-    if (file_len < T.bytes * 2) return null;
-    var buf: [T.bytes]u8 = undefined;
-    _ = try file.readPositionalAll(io, &buf, file_len - (T.bytes * 2));
+    if (file_len < record_len * 2) return null;
+    var buf: [128]u8 = undefined;
+    assert(buf.len > 2 * record_len);
+    _ = try file.readPositionalAll(io, &buf, file_len - (record_len * 2));
     var r = std.Io.Reader.fixed(&buf);
-    return try T.parse(&r);
+    const ts = try r.takeInt(u32, .little);
+    return ts;
 }
 
 pub fn joinMcast(fd: std.os.linux.socket_t, addr: Io.net.IpAddress) !void {

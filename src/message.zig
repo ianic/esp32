@@ -7,46 +7,30 @@ const log = std.log.scoped(.msg);
 
 pub const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
-pub const Temp = struct {
-    ts: u32,
-    temp: u16,
+pub const TempReading = struct {
+    // Upper 5 bits are sign, -1 if all 5 are set.
+    // Lower 11 bits are value in 1/16 of Celsius degree.
+    reading: u16,
 
-    pub const bytes = 6;
-    pub const empty: Temp = .{ .ts = 0, .temp = std.math.maxInt(u16) };
     const sign_mask: u16 = 0xf800;
 
-    pub fn parse(r: *Io.Reader) !Temp {
-        const ts = try r.takeInt(u32, .little);
-        const temp = try r.takeInt(u16, .little);
-        return .{ .ts = ts, .temp = temp };
-    }
-
-    pub fn encode(self: Temp, w: *Io.Writer) !void {
-        try w.writeInt(u32, self.ts, .little);
-        try w.writeInt(u16, self.temp, .little);
-    }
-
-    pub fn celsius(self: Temp) f64 {
+    pub fn celsius(self: TempReading) f64 {
         return @as(f64, @floatFromInt(self.value())) / 16;
     }
 
-    pub fn value(self: Temp) i16 {
-        const neg = self.temp & sign_mask == sign_mask;
+    pub fn value(self: TempReading) i16 {
+        const neg = self.reading & sign_mask == sign_mask;
         const sign: i16 = if (neg) -1 else 1;
-        return @as(i16, @intCast(self.temp & ~sign_mask)) * sign;
+        return @as(i16, @intCast(self.reading & ~sign_mask)) * sign;
     }
 
-    pub fn equal(a: Temp, b: Temp) bool {
+    pub fn equal(a: TempReading, b: TempReading) bool {
         return @abs(a.value() - b.value()) <= 1;
-    }
-
-    pub fn isEmpty(self: Temp) bool {
-        return self.ts == 0;
     }
 
     test "negative" {
         const n1 = 0b11111_11100100000;
-        try testing.expectEqual(-0b11100100000 / 16, (Temp{ .ts = 0, .temp = n1 }).celsius());
+        try testing.expectEqual(-0b11100100000 / 16, (TempReading{ .reading = n1 }).celsius());
     }
 
     test equal {
@@ -71,15 +55,109 @@ pub const Temp = struct {
             .{ .a = 0, .b = 1 | sign_mask, .eql = true },
         };
         for (cases) |c| {
-            const a: Temp = .{ .temp = c.a, .ts = 0 };
-            const b: Temp = .{ .temp = c.b, .ts = 0 };
+            const a: TempReading = .{ .reading = c.a };
+            const b: TempReading = .{ .reading = c.b };
             try testing.expect(a.equal(b) == c.eql);
         }
     }
 };
 
+pub const Temp = struct {
+    ts: u32,
+    temp: TempReading,
+
+    pub const bytes = 6;
+    pub const empty: Temp = .{ .ts = 0, .temp = .{ .reading = std.math.maxInt(u16) } };
+    const sign_mask: u16 = 0xf800;
+
+    pub fn init(ts: u32, temp: u16) Temp {
+        return .{ .ts = ts, .temp = .{ .reading = temp } };
+    }
+
+    pub fn parse(r: *Io.Reader) !Temp {
+        const ts = try r.takeInt(u32, .little);
+        const temp = try r.takeInt(u16, .little);
+        return .{ .ts = ts, .temp = .{ .reading = temp } };
+    }
+
+    pub fn encode(self: Temp, w: *Io.Writer) !void {
+        try w.writeInt(u32, self.ts, .little);
+        try w.writeInt(u16, self.temp.reading, .little);
+    }
+
+    pub fn celsius(self: Temp) f64 {
+        return self.temp.celsius();
+    }
+
+    pub fn value(self: Temp) i16 {
+        return self.temp.value();
+    }
+
+    pub fn equal(a: Temp, b: Temp) bool {
+        return @abs(a.value() - b.value()) <= 1;
+    }
+
+    pub fn isEmpty(self: Temp) bool {
+        return self.ts == 0;
+    }
+};
+
+pub const Thermostat = struct {
+    ts: u32,
+    current: u16,
+    target: u8,
+    heating: bool,
+
+    pub fn parse(r: *Io.Reader) !Thermostat {
+        const ts = try r.takeInt(u32, .little);
+        const current = try r.takeInt(u16, .little);
+        const target = try r.takeByte();
+        const flags = try r.takeByte();
+        return .{
+            .ts = ts,
+            .current = current,
+            .target = target,
+            .heating = flags & 0b1 > 0,
+        };
+    }
+
+    pub fn encode(self: Thermostat, w: *Io.Writer) !void {
+        try w.writeInt(u32, self.ts, .little);
+        try w.writeInt(u16, self.current, .little);
+        try w.writeByte(self.target);
+        const flags: u8 = if (self.heating) 0b1 else 0;
+        try w.writeByte(flags);
+    }
+
+    test {
+        var buf: [16]u8 = undefined;
+        var w = Io.Writer.fixed(&buf);
+        var r = Io.Reader.fixed(&buf);
+
+        const t: Thermostat = .{
+            .ts = 0xaabbccdd,
+            .current = 22 * 8,
+            .target = 23 * 2,
+            .heating = true,
+        };
+        try t.encode(&w);
+
+        const t2 = try Thermostat.parse(&r);
+        try testing.expectEqualDeep(t, t2);
+        try testing.expectEqual(8, r.seek);
+    }
+};
+
 pub const Type = enum(u8) {
     temperature_reading = 0xaa,
+    thermostat_reading = 0xab,
+
+    pub fn size(t: Type) usize {
+        return switch (t) {
+            .temperature_reading => 6,
+            .thermostat_reading => 8,
+        };
+    }
 };
 
 pub const Header = struct {
@@ -109,7 +187,7 @@ pub const Header = struct {
 
     pub fn encode(self: Header, w: *Io.Writer) !void {
         try w.writeInt(u48, self.device_id, .little);
-        try w.writeByte(@intFromEnum(self.message_type));
+        try w.writeByte(@backingInt(self.message_type));
         try w.writeByte(@bitCast(self.flags));
         try w.writeInt(u32, self.session_id, .little);
     }
@@ -143,7 +221,9 @@ pub const Header = struct {
 
 test {
     _ = Temp;
+    _ = TempReading;
     _ = Header;
+    _ = Thermostat;
 }
 
 pub fn iterate(
@@ -224,7 +304,7 @@ test iterate {
         const w = &fw.interface;
 
         for (0..10) |_| {
-            const rec: Temp = .{ .ts = ts, .temp = 0 };
+            const rec: Temp = .{ .ts = ts, .temp = .{ .reading = 0 } };
             try rec.encode(w);
             ts += 1;
         }
