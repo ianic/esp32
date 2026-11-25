@@ -40,6 +40,7 @@ echo Building: $project
 unset IDF_PYTHON_ENV_PATH
 . esp-idf/export.sh
 
+export KCONFIG_REPORT_VERBOSITY=quiet
 
 if [ "$rebuild" = true ]; then
     rm -rf build

@@ -10,6 +10,8 @@ const msg = @import("msg");
 var wifi: @import("WiFi.zig") = .{};
 const TempSensor = @import("temp_sensor.zig").TempSensor;
 const SensorHealth = @import("temp_sensor.zig").SensorHealth;
+const Target = @import("temp_sensor.zig").Target;
+const Relay = @import("temp_sensor.zig").Relay;
 const Readings = msg.RingBuffer(msg.Temp);
 
 var device_id: u48 = 0;
@@ -21,6 +23,12 @@ var bcast: struct {
 
 const led_pin: idf.gpio.Num() = .@"21";
 const relay_pin: idf.gpio.Num() = .@"9";
+
+export fn app_main() callconv(.c) void {
+    main() catch |err| {
+        log.err("main failed {s}", .{@errorName(err)});
+    };
+}
 
 fn main() !void {
     try idf.nvs.flashInitOrErase();
@@ -53,12 +61,6 @@ fn main() !void {
     );
 
     // log.debug("heap free size 2: {} {}", .{ heap.freeSize(), heap.largestFreeBlock() });
-}
-
-export fn app_main() callconv(.c) void {
-    main() catch |err| {
-        log.err("main failed {s}", .{@errorName(err)});
-    };
 }
 
 fn readTempWorker(ptr: ?*anyopaque) callconv(.c) void {
@@ -122,9 +124,10 @@ fn master() !void {
     });
     const readings_buf = try gpa.alloc(msg.Temp, count);
     var readings: Readings = .init(readings_buf);
+    const target: Target = .default;
+    var relay: Relay = .{ .target = target };
 
     var net_buf: [1460]u8 = undefined;
-
     var led_on: u1 = 0;
     while (true) {
         var val: u32 = 0;
@@ -136,30 +139,35 @@ fn master() !void {
         }
 
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
-            const reading: msg.Temp = .{ .ts = timestamp(), .temp = @intCast(val) };
+            const reading: msg.Temp = .init(timestamp(), @intCast(val));
             if (session_id == 0) {
                 session_id = reading.ts;
             }
             if (readings.last()) |l| {
                 if (@abs(l.celsius() - reading.celsius()) > 10) continue;
             }
+            {
+                _ = relay.set(reading.ts, reading.temp.reading);
+                idf.gpio.Level.set(relay_pin, relay.heating) catch {};
+            }
             readings.append(reading);
+
             sendUpdate(&readings, &net_buf) catch |err| {
                 log.err("send update failed {}", .{err});
                 continue;
             };
-
             log.debug("{d} got reading: {d} in °C: {d} and {d}/16 readings: {d} {}", .{
                 reading.ts,
-                reading.temp,
-                reading.temp / 16,
-                reading.temp % 16,
+                reading.temp.reading,
+                reading.temp.reading / 16,
+                reading.temp.reading % 16,
                 readings.count(),
                 readings.sequenceRange(),
             });
-            led_on ^= 1;
-            idf.gpio.Level.set(led_pin, led_on) catch {};
-            //idf.gpio.Level.set(relay_pin, led_on) catch {};
+            {
+                led_on ^= 1;
+                idf.gpio.Level.set(led_pin, led_on) catch {};
+            }
         }
 
         if (task.notifyWait(socket_notification_index, clear_none, clear_all, &val, rtos.msToTicks(500))) {
@@ -373,4 +381,8 @@ fn otaUpdate(url: [*c]const u8) !void {
         .http_config = &config,
     };
     try idf.err.espCheckError(sys.esp_https_ota(@ptrCast(&ota_config)));
+}
+
+test {
+    try std.testing.expect(true);
 }
