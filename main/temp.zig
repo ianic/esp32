@@ -12,7 +12,8 @@ const TempSensor = @import("temp_sensor.zig").TempSensor;
 const SensorHealth = @import("temp_sensor.zig").SensorHealth;
 const Target = @import("temp_sensor.zig").Target;
 const Relay = @import("temp_sensor.zig").Relay;
-const Readings = msg.RingBuffer(msg.Temp);
+const Readings = msg.RingBuffer(msg.Thermostat);
+const message_type = msg.Type.thermostat_reading;
 
 var device_id: u48 = 0;
 var session_id: u32 = 0;
@@ -114,20 +115,19 @@ fn master() !void {
     var heap = idf.heap.HeapCapsAllocator.init(.{ .@"32bit" = true });
     const gpa = heap.allocator();
     const count: usize = @min(
-        (heap.largestFreeBlock() - 32) / @sizeOf(msg.Temp),
+        (heap.largestFreeBlock() - 32) / @sizeOf(msg.Thermostat),
         std.math.maxInt(u16),
     );
     log.debug("allocating {} readings, {} bytes, {} largestFreeBlock", .{
         count,
-        count * @sizeOf(msg.Temp),
+        count * @sizeOf(msg.Thermostat),
         heap.largestFreeBlock(),
     });
-    const readings_buf = try gpa.alloc(msg.Temp, count);
+    const readings_buf = try gpa.alloc(msg.Thermostat, count);
     var readings: Readings = .init(readings_buf);
-    const target: Target = .default;
-    var relay: Relay = .{ .target = target };
+    var relay: Relay = .{ .target = .default };
 
-    var net_buf: [1460]u8 = undefined;
+    var net_buf: [128]u8 = undefined;
     var led_on: u1 = 0;
     while (true) {
         var val: u32 = 0;
@@ -139,31 +139,36 @@ fn master() !void {
         }
 
         if (task.notifyWait(temp_notification_index, clear_none, clear_all, &val, 0)) {
-            const reading: msg.Temp = .init(timestamp(), @intCast(val));
+            const current: msg.TemperatureSensor = .{ .reading = @intCast(val) };
+            const ts: u32 = timestamp();
             if (session_id == 0) {
-                session_id = reading.ts;
+                session_id = ts;
             }
-            if (readings.last()) |l| {
-                if (@abs(l.celsius() - reading.celsius()) > 10) continue;
+            if (readings.last()) |last| {
+                if (@abs(last.current.celsius() - current.celsius()) > 10) continue;
             }
-            {
-                _ = relay.set(reading.ts, reading.temp.reading);
-                idf.gpio.Level.set(relay_pin, relay.heating) catch {};
-            }
+            const target, const heating, _ = relay.set(ts, current.reading);
+            idf.gpio.Level.set(relay_pin, heating) catch {};
+            const reading = msg.Thermostat{
+                .ts = ts,
+                .current = current,
+                .target = target,
+                .heating = heating,
+            };
             readings.append(reading);
 
             sendUpdate(&readings, &net_buf) catch |err| {
                 log.err("send update failed {}", .{err});
                 continue;
             };
-            log.debug("{d} got reading: {d} in °C: {d} and {d}/16 readings: {d} {}", .{
-                reading.ts,
-                reading.temp.reading,
-                reading.temp.reading / 16,
-                reading.temp.reading % 16,
-                readings.count(),
-                readings.sequenceRange(),
-            });
+            // log.debug("{d} got reading: {d} in °C: {d} and {d}/16 readings: {d} {}", .{
+            //     reading.ts,
+            //     reading.temp.reading,
+            //     reading.temp.reading / 16,
+            //     reading.temp.reading % 16,
+            //     readings.count(),
+            //     readings.sequenceRange(),
+            // });
             {
                 led_on ^= 1;
                 idf.gpio.Level.set(led_pin, led_on) catch {};
@@ -182,10 +187,9 @@ fn master() !void {
 
 fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
-
     const header: msg.Header = .{
         .device_id = device_id,
-        .message_type = .temperature_reading,
+        .message_type = message_type,
         .session_id = session_id,
         .flags = .{ .state = true },
     };
@@ -194,7 +198,7 @@ fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
     try w.writeInt(u16, @intCast(readings.count()), .little);
     var iter = readings.iterator();
     while (iter.next()) |r| {
-        if (w.unusedCapacityLen() < 4 + 2) {
+        if (w.unusedCapacityLen() < message_type.size()) {
             while (w.end > 0) {
                 const n = try socket.send(w.buffered(), 0);
                 _ = w.consume(n);
@@ -210,17 +214,16 @@ fn sendState(socket: lwip.Socket, readings: *Readings, buf: []u8) !void {
 
 fn sendUpdate(readings: *Readings, buf: []u8) !void {
     var w = std.Io.Writer.fixed(buf);
-
     const header: msg.Header = .{
         .device_id = device_id,
-        .message_type = .temperature_reading,
+        .message_type = message_type,
         .session_id = session_id,
     };
     try header.encode(&w);
 
     // number of readings which fit into buf
     const count: u16 = @min(
-        (w.unusedCapacityLen() - 2) / 6,
+        (w.unusedCapacityLen() - 2) / message_type.size(),
         readings.count(),
         std.math.maxInt(u16),
     );

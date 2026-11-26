@@ -214,16 +214,16 @@ pub const Target = struct {
         .day_to = 23 * 2,
     };
 
-    pub fn get(self: Target, ts: u32) u16 {
+    pub fn get(self: Target, ts: u32) u8 {
         const sec = ts % 86400;
         const sec_from: u32 = @as(u32, self.day_from) * 1800;
         const sec_to: u32 = @as(u32, self.day_to) * 1800;
         if ((sec_from < sec_to and (sec >= sec_from and sec < sec_to)) or
             (sec_from > sec_to and (sec >= sec_from or sec < sec_to)))
         {
-            return @as(u16, self.day) * 4;
+            return self.day;
         }
-        return @as(u16, self.night) * 4;
+        return self.night;
     }
 
     test {
@@ -233,23 +233,23 @@ pub const Target = struct {
             .day_from = 7 * 2,
             .day_to = 23 * 2,
         };
-        try testing.expectEqual(15 * 8, t.get(0));
-        try testing.expectEqual(15 * 8, t.get(7 * 3600 - 1));
-        try testing.expectEqual(22 * 8, t.get(7 * 3600));
-        try testing.expectEqual(22 * 8, t.get(23 * 3600 - 1));
-        try testing.expectEqual(15 * 8, t.get(23 * 3600));
+        try testing.expectEqual(15 * 2, t.get(0));
+        try testing.expectEqual(15 * 2, t.get(7 * 3600 - 1));
+        try testing.expectEqual(22 * 2, t.get(7 * 3600));
+        try testing.expectEqual(22 * 2, t.get(23 * 3600 - 1));
+        try testing.expectEqual(15 * 2, t.get(23 * 3600));
         t = .{
             .day = 22 * 2,
             .night = 15 * 2,
             .day_from = 10 * 2,
             .day_to = 1 * 2,
         };
-        try testing.expectEqual(22 * 8, t.get(0));
-        try testing.expectEqual(22 * 8, t.get(1 * 3600 - 1));
-        try testing.expectEqual(15 * 8, t.get(1 * 3600));
-        try testing.expectEqual(15 * 8, t.get(10 * 3600 - 1));
-        try testing.expectEqual(22 * 8, t.get(10 * 3600));
-        try testing.expectEqual(22 * 8, t.get(23 * 3600));
+        try testing.expectEqual(22 * 2, t.get(0));
+        try testing.expectEqual(22 * 2, t.get(1 * 3600 - 1));
+        try testing.expectEqual(15 * 2, t.get(1 * 3600));
+        try testing.expectEqual(15 * 2, t.get(10 * 3600 - 1));
+        try testing.expectEqual(22 * 2, t.get(10 * 3600));
+        try testing.expectEqual(22 * 2, t.get(23 * 3600));
     }
 };
 
@@ -258,20 +258,23 @@ pub const Relay = struct {
     heating: u1 = 0,
     target: Target,
 
-    pub fn set(self: *Relay, ts: u32, temp: u16) bool {
-        if (ts - self.last_change < 60) return false;
-        const target_temp = self.target.get(ts);
-        if (target_temp > temp and self.heating == 0 and target_temp - temp >= 4) {
-            self.last_change = ts;
-            self.heating = 1;
-            return true;
+    pub fn set(self: *Relay, ts: u32, temp: u16) struct { u8, u1, bool } {
+        const target: u8 = self.target.get(ts);
+        const target_temp: u16 = @as(u16, target) * 4;
+        var changed = false;
+        if (ts - self.last_change >= 60) {
+            if (target_temp > temp and self.heating == 0 and target_temp - temp >= 4) {
+                self.last_change = ts;
+                self.heating = 1;
+                changed = true;
+            }
+            if (target_temp < temp and self.heating == 1 and temp - target_temp >= 4) {
+                self.last_change = ts;
+                self.heating = 0;
+                changed = true;
+            }
         }
-        if (target_temp < temp and self.heating == 1 and temp - target_temp >= 4) {
-            self.last_change = ts;
-            self.heating = 0;
-            return true;
-        }
-        return false;
+        return .{ target, self.heating, changed };
     }
 
     test {
@@ -282,15 +285,21 @@ pub const Relay = struct {
             .day_to = 23 * 2,
         };
         var r: Relay = .{ .target = target };
-        try testing.expect(!r.set(0, 20 * 8));
-        try testing.expect(!r.set(0, 10 * 8));
+        _, _, var changed = r.set(0, 20 * 8);
+        try testing.expect(!changed);
+        _, _, changed = r.set(0, 10 * 8);
+        try testing.expect(!changed);
         try testing.expect(r.heating == 0);
-        try testing.expect(r.set(60, 10 * 8));
+        _, _, changed = r.set(60, 10 * 8);
+        try testing.expect(changed);
         try testing.expect(r.heating == 1);
-        try testing.expect(!r.set(119, 22 * 8));
-        try testing.expect(!r.set(120, 15 * 8));
+        _, _, changed = r.set(119, 22 * 8);
+        try testing.expect(!changed);
+        _, _, changed = r.set(120, 15 * 8);
+        try testing.expect(!changed);
         try testing.expect(r.heating == 1);
-        try testing.expect(r.set(120, 15 * 8 + 4));
+        _, _, changed = r.set(120, 15 * 8 + 4);
+        try testing.expect(changed);
         try testing.expect(r.heating == 0);
         try testing.expectEqual(120, r.last_change);
     }

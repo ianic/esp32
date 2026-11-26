@@ -7,30 +7,30 @@ const log = std.log.scoped(.msg);
 
 pub const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
-pub const TempReading = struct {
+pub const TemperatureSensor = struct {
     // Upper 5 bits are sign, -1 if all 5 are set.
     // Lower 11 bits are value in 1/16 of Celsius degree.
     reading: u16,
 
     const sign_mask: u16 = 0xf800;
 
-    pub fn celsius(self: TempReading) f64 {
+    pub fn celsius(self: TemperatureSensor) f64 {
         return @as(f64, @floatFromInt(self.value())) / 16;
     }
 
-    pub fn value(self: TempReading) i16 {
+    pub fn value(self: TemperatureSensor) i16 {
         const neg = self.reading & sign_mask == sign_mask;
         const sign: i16 = if (neg) -1 else 1;
         return @as(i16, @intCast(self.reading & ~sign_mask)) * sign;
     }
 
-    pub fn equal(a: TempReading, b: TempReading) bool {
+    pub fn equal(a: TemperatureSensor, b: TemperatureSensor) bool {
         return @abs(a.value() - b.value()) <= 1;
     }
 
     test "negative" {
         const n1 = 0b11111_11100100000;
-        try testing.expectEqual(-0b11100100000 / 16, (TempReading{ .reading = n1 }).celsius());
+        try testing.expectEqual(-0b11100100000 / 16, (TemperatureSensor{ .reading = n1 }).celsius());
     }
 
     test equal {
@@ -55,58 +55,58 @@ pub const TempReading = struct {
             .{ .a = 0, .b = 1 | sign_mask, .eql = true },
         };
         for (cases) |c| {
-            const a: TempReading = .{ .reading = c.a };
-            const b: TempReading = .{ .reading = c.b };
+            const a: TemperatureSensor = .{ .reading = c.a };
+            const b: TemperatureSensor = .{ .reading = c.b };
             try testing.expect(a.equal(b) == c.eql);
         }
     }
 };
 
-pub const Temp = struct {
+pub const Temperature = struct {
     ts: u32,
-    temp: TempReading,
+    temp: TemperatureSensor,
 
     pub const bytes = 6;
-    pub const empty: Temp = .{ .ts = 0, .temp = .{ .reading = std.math.maxInt(u16) } };
+    pub const empty: Temperature = .{ .ts = 0, .temp = .{ .reading = std.math.maxInt(u16) } };
     const sign_mask: u16 = 0xf800;
 
-    pub fn init(ts: u32, temp: u16) Temp {
+    pub fn init(ts: u32, temp: u16) Temperature {
         return .{ .ts = ts, .temp = .{ .reading = temp } };
     }
 
-    pub fn parse(r: *Io.Reader) !Temp {
+    pub fn parse(r: *Io.Reader) !Temperature {
         const ts = try r.takeInt(u32, .little);
         const temp = try r.takeInt(u16, .little);
         return .{ .ts = ts, .temp = .{ .reading = temp } };
     }
 
-    pub fn encode(self: Temp, w: *Io.Writer) !void {
+    pub fn encode(self: Temperature, w: *Io.Writer) !void {
         try w.writeInt(u32, self.ts, .little);
         try w.writeInt(u16, self.temp.reading, .little);
     }
 
-    pub fn celsius(self: Temp) f64 {
+    pub fn celsius(self: Temperature) f64 {
         return self.temp.celsius();
     }
 
-    pub fn value(self: Temp) i16 {
+    pub fn value(self: Temperature) i16 {
         return self.temp.value();
     }
 
-    pub fn equal(a: Temp, b: Temp) bool {
+    pub fn equal(a: Temperature, b: Temperature) bool {
         return @abs(a.value() - b.value()) <= 1;
     }
 
-    pub fn isEmpty(self: Temp) bool {
+    pub fn isEmpty(self: Temperature) bool {
         return self.ts == 0;
     }
 };
 
 pub const Thermostat = struct {
     ts: u32,
-    current: u16,
+    current: TemperatureSensor,
     target: u8,
-    heating: bool,
+    heating: u1,
 
     pub fn parse(r: *Io.Reader) !Thermostat {
         const ts = try r.takeInt(u32, .little);
@@ -115,18 +115,22 @@ pub const Thermostat = struct {
         const flags = try r.takeByte();
         return .{
             .ts = ts,
-            .current = current,
+            .current = .{ .reading = current },
             .target = target,
-            .heating = flags & 0b1 > 0,
+            .heating = @intCast(flags & 0b1),
         };
     }
 
     pub fn encode(self: Thermostat, w: *Io.Writer) !void {
         try w.writeInt(u32, self.ts, .little);
-        try w.writeInt(u16, self.current, .little);
+        try w.writeInt(u16, self.current.reading, .little);
         try w.writeByte(self.target);
-        const flags: u8 = if (self.heating) 0b1 else 0;
+        const flags: u8 = self.heating;
         try w.writeByte(flags);
+    }
+
+    pub fn equal(a: Thermostat, b: Thermostat) bool {
+        return @abs(a.current.value() - b.current.value()) <= 1;
     }
 
     test {
@@ -136,9 +140,9 @@ pub const Thermostat = struct {
 
         const t: Thermostat = .{
             .ts = 0xaabbccdd,
-            .current = 22 * 8,
+            .current = .{ .reading = 22 * 8 },
             .target = 23 * 2,
-            .heating = true,
+            .heating = 1,
         };
         try t.encode(&w);
 
@@ -220,8 +224,8 @@ pub const Header = struct {
 };
 
 test {
-    _ = Temp;
-    _ = TempReading;
+    _ = Temperature;
+    _ = TemperatureSensor;
     _ = Header;
     _ = Thermostat;
 }
@@ -304,7 +308,7 @@ test iterate {
         const w = &fw.interface;
 
         for (0..10) |_| {
-            const rec: Temp = .{ .ts = ts, .temp = .{ .reading = 0 } };
+            const rec: Temperature = .{ .ts = ts, .temp = .{ .reading = 0 } };
             try rec.encode(w);
             ts += 1;
         }
@@ -315,7 +319,7 @@ test iterate {
         count: usize = 0,
         min_ts: u32 = std.math.maxInt(u32),
         max_ts: u32 = 0,
-        fn handle(ptr: *anyopaque, rec: Temp) anyerror!void {
+        fn handle(ptr: *anyopaque, rec: Temperature) anyerror!void {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.min_ts = @min(rec.ts, self.min_ts);
             self.max_ts = @max(rec.ts, self.max_ts);
@@ -324,19 +328,19 @@ test iterate {
     };
 
     var ctx: Ctx = .{};
-    try iterate(Temp, gpa, io, tmp.dir, 0, 100, &ctx, Ctx.handle);
+    try iterate(Temperature, gpa, io, tmp.dir, 0, 100, &ctx, Ctx.handle);
     try testing.expectEqual(100, ctx.count);
     try testing.expectEqual(1, ctx.min_ts);
     try testing.expectEqual(100, ctx.max_ts);
 
     ctx = .{};
-    try iterate(Temp, gpa, io, tmp.dir, 55, 74, &ctx, Ctx.handle);
+    try iterate(Temperature, gpa, io, tmp.dir, 55, 74, &ctx, Ctx.handle);
     try testing.expectEqual(20, ctx.count);
     try testing.expectEqual(55, ctx.min_ts);
     try testing.expectEqual(74, ctx.max_ts);
 
     ctx = .{};
-    try iterate(Temp, gpa, io, tmp.dir, 95, 100, &ctx, Ctx.handle);
+    try iterate(Temperature, gpa, io, tmp.dir, 95, 100, &ctx, Ctx.handle);
     try testing.expectEqual(6, ctx.count);
     try testing.expectEqual(95, ctx.min_ts);
     try testing.expectEqual(100, ctx.max_ts);

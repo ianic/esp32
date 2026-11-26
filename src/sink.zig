@@ -85,7 +85,7 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
     const Ctx = struct {
         w: *Io.Writer,
         count: usize = 0,
-        fn handle(ptr: *anyopaque, rec: msg.Temp) anyerror!void {
+        fn handle(ptr: *anyopaque, rec: msg.Temperature) anyerror!void {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             if (rec.celsius() < 0 and rec.ts < 1784166457) {
                 return;
@@ -101,7 +101,7 @@ fn onConnect_(io: Io, gpa: mem.Allocator, conn: Io.net.Stream, root_dir: Io.Dir)
     var ctx: Ctx = .{ .w = w };
 
     try w.print("timestamp,temperature\n", .{});
-    try msg.iterate(msg.Temp, gpa, io, dir, from_ts, to_ts, &ctx, Ctx.handle);
+    try msg.iterate(msg.Temperature, gpa, io, dir, from_ts, to_ts, &ctx, Ctx.handle);
     try w.flush();
     try request.respond(w.buffered(), .{});
 
@@ -129,29 +129,43 @@ fn udpSink(io: Io, root_dir: Io.Dir) !void {
         const file = try open(io, root_dir, header);
         defer file.close(io);
         const record_len = header.message_type.size();
-        const last_ts = try secondToLast(record_len, io, file);
+        const prev_ts = try secondToLast(record_len, io, file);
         var fw = file.writer(io, &write_buf);
         const w = &fw.interface;
 
-        // If there is continuation, previous record is found in update packet
-        var can_append = false;
         var appended_records: usize = 0;
-        var last_appended: u32 = 0;
-        if (last_ts) |lts| {
-            try fw.seekTo(try file.length(io) - record_len); // always replace last record
+        var last_ts: u32 = 0;
+        if (prev_ts) |pts| {
+            // Always replace last record
+            try fw.seekTo(try file.length(io) - record_len);
             const count = try rdr.takeInt(u16, .little);
+            // If previous record is found in update packet
+            var continuation_found = false;
             for (0..count) |_| {
                 const rec_bytes = try rdr.take(record_len);
                 const rec_ts = mem.readInt(u32, rec_bytes[0..4], .little);
-                if (can_append) {
+                if (continuation_found) {
                     try w.writeAll(rec_bytes);
-                    last_appended = rec_ts;
+                    last_ts = rec_ts;
                     appended_records += 1;
-                } else if (rec_ts == lts)
-                    can_append = true;
+                } else if (rec_ts == pts)
+                    continuation_found = true;
             }
         }
-        if (!can_append) { // read full state
+        if (appended_records > 0) {
+            log.debug(
+                "{x}-{x}/{d} update: {}, received: {}, rel. ts: {}",
+                .{
+                    header.device_id,
+                    @backingInt(header.message_type),
+                    header.session_id,
+                    appended_records,
+                    0,
+                    last_ts - header.session_id,
+                },
+            );
+        } else {
+            // read full state
             try fw.seekTo(try file.length(io));
             var addr = packet.from;
             addr.setPort(4243);
@@ -168,28 +182,30 @@ fn udpSink(io: Io, root_dir: Io.Dir) !void {
             for (0..count) |i| {
                 const rec_bytes = try rdr.take(record_len);
                 const rec_ts = mem.readInt(u32, rec_bytes[0..4], .little);
-                if (i == 0) if (last_ts) |lts| if (rec_ts > lts) {
+                if (i == 0) if (prev_ts) |pts| if (rec_ts > pts) {
                     // If there is gap between last and new state add empty record
-                    try msg.Temp.empty.encode(w);
+                    for (0..record_len) |_|
+                        try w.writeByte(0);
                 };
-                if (last_ts == null or rec_ts > last_ts.?) {
+                if (prev_ts == null or rec_ts > prev_ts.?) {
                     try w.writeAll(rec_bytes);
-                    last_appended = rec_ts;
+                    last_ts = rec_ts;
                     appended_records += 1;
                 }
             }
+            log.debug(
+                "{x}-{x}/{d} state appended: {}, received: {}, rel. ts: {}",
+                .{
+                    header.device_id,
+                    @backingInt(header.message_type),
+                    header.session_id,
+                    appended_records,
+                    count,
+                    last_ts - header.session_id,
+                },
+            );
         }
         try fw.flush();
-        log.debug(
-            "{x}-{x}/{d}, records: {d}, last timestamp: {}",
-            .{
-                header.device_id,
-                @backingInt(header.message_type),
-                header.session_id,
-                appended_records,
-                last_appended,
-            },
-        );
     }
 }
 
